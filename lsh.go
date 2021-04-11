@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 
 	"gonum.org/v1/gonum/floats"
 )
@@ -23,12 +24,23 @@ var (
 	errNoOptions                 = errors.New("no options set for LSH")
 	errFeatureLengthMismatch     = errors.New("feature slice length mismatch")
 	errNoFeatures                = errors.New("no features provided")
+	errDocumentExists            = errors.New("document already exists")
+	errDocumentNotStored         = errors.New("document id is not stored")
+	errHashNotFound              = errors.New("hash not found in table")
 )
 
 type Options struct {
 	NumHyperplanes int
 	NumTables      int
 	NumFeatures    int
+}
+
+func NewDefaultOptions() *Options {
+	return &Options{
+		NumHyperplanes: 16,
+		NumTables:      2,
+		NumFeatures:    3,
+	}
 }
 
 func (o *Options) Validate() error {
@@ -50,34 +62,29 @@ func (o *Options) Validate() error {
 	return nil
 }
 
-func NewDefaultOptions() *Options {
-	return &Options{
-		NumHyperplanes: 16,
-		NumTables:      2,
-		NumFeatures:    3,
-	}
-}
-
 type LSH struct {
 	opt    *Options
-	tables []*Table
+	tables []*table
 }
 
-func (l *LSH) init() error {
-	if l.opt == nil {
-		return errNoOptions
+func NewLSH(opt *Options) (*LSH, error) {
+	if err := opt.Validate(); err != nil {
+		return nil, err
 	}
+	l := new(LSH)
+	l.opt = opt
 
 	var err error
 
-	l.tables = make([]*Table, l.opt.NumTables)
+	l.tables = make([]*table, l.opt.NumTables)
 	for i := 0; i < l.opt.NumTables; i++ {
-		l.tables[i], err = NewTable(l.opt.NumHyperplanes, l.opt.NumFeatures)
+		l.tables[i], err = newTable(l.opt.NumHyperplanes, l.opt.NumFeatures)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+
+	return l, nil
 }
 
 func (l *LSH) Index(d *Document) error {
@@ -95,28 +102,78 @@ func (l *LSH) Index(d *Document) error {
 	return nil
 }
 
-func NewLSH(opt *Options) (*LSH, error) {
-	if err := opt.Validate(); err != nil {
-		return nil, err
+func (l *LSH) Delete(uid uint64) error {
+	var err error
+	for _, t := range l.tables {
+		if e := t.delete(uid); e != nil {
+			err = e
+		}
 	}
-	l := new(LSH)
-	l.opt = opt
-	if err := l.init(); err != nil {
-		return nil, err
-	}
-	return l, nil
+	return err
 }
 
-type Hyperplanes struct {
+func (l *LSH) Search(f []float64, numToReturn int) ([]uint64, error) {
+	if len(f) != l.opt.NumFeatures {
+		return nil, errInvalidDocument
+	}
+
+	floats.Scale(floats.Norm(f, 2), f)
+
+	res := make(map[uint64]struct{})
+	for _, t := range l.tables {
+		uids, err := t.search(f, numToReturn)
+		if err != nil {
+			return nil, err
+		}
+		for _, uid := range uids {
+			if _, exists := res[uid]; !exists {
+				res[uid] = struct{}{}
+			}
+		}
+	}
+
+	var out []uint64
+	for uid := range res {
+		out = append(out, uid)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+type hyperplanes struct {
 	planes [][]float64
+	buffer []byte
 }
 
-func (h *Hyperplanes) hash(f []float64) (uint64, error) {
+func newHyperplanes(numHyperplanes, numFeatures int) (*hyperplanes, error) {
+	if numHyperplanes < 1 {
+		return nil, errInvalidNumHyperplanes
+	}
+
+	if numFeatures < 1 {
+		return nil, errInvalidNumFeatures
+	}
+
+	h := new(hyperplanes)
+	h.buffer = make([]byte, 8)
+	h.planes = make([][]float64, numHyperplanes)
+	for i := 0; i < numHyperplanes; i++ {
+		h.planes[i] = make([]float64, numFeatures)
+		for j := 0; j < numFeatures; j++ {
+			h.planes[i][j] = rand.Float64()
+		}
+		floats.Scale(1/floats.Norm(h.planes[i], 2), h.planes[i])
+	}
+
+	return h, nil
+}
+
+func (h *hyperplanes) hash(f []float64) (uint64, error) {
 	if len(f) == 0 {
 		return 0, errNoFeatures
 	}
 
-	var bs []byte
+	bs := h.buffer
 	var b byte
 	var bitCnt, byteCnt int
 
@@ -140,29 +197,7 @@ func (h *Hyperplanes) hash(f []float64) (uint64, error) {
 	if bitCnt != 0 {
 		bs[byteCnt] = b
 	}
-	return binary.LittleEndian.Uint64(bs), nil
-}
-
-func NewHyperplanes(numHyperplanes, numFeatures int) (*Hyperplanes, error) {
-	if numHyperplanes < 1 {
-		return nil, errInvalidNumHyperplanes
-	}
-
-	if numFeatures < 1 {
-		return nil, errInvalidNumFeatures
-	}
-
-	h := new(Hyperplanes)
-	h.planes = make([][]float64, numHyperplanes)
-	for i := 0; i < numHyperplanes; i++ {
-		h.planes[i] = make([]float64, numFeatures)
-		for j := 0; j < numFeatures; j++ {
-			h.planes[i][j] = rand.Float64()
-		}
-		floats.Scale(1/floats.Norm(h.planes[i], 2), h.planes[i])
-	}
-
-	return h, nil
+	return binary.BigEndian.Uint64(bs), nil
 }
 
 type Document struct {
@@ -177,29 +212,93 @@ func NewDocument(uid uint64, f []float64) *Document {
 	}
 }
 
-type Table struct {
-	hyperplanes *Hyperplanes
+type table struct {
+	hyperplanes *hyperplanes
 	table       map[uint64][]uint64
+	docs        map[uint64]uint64
 }
 
-func (t *Table) index(d *Document) error {
-	hash, err := t.hyperplanes.hash(d.features)
-	if err != nil {
-		return err
-	}
-	t.table[hash] = append(t.table[hash], d.uid)
-	return nil
-}
-
-func NewTable(numHyper, numFeat int) (*Table, error) {
-	t := new(Table)
+func newTable(numHyper, numFeat int) (*table, error) {
+	t := new(table)
 
 	var err error
-	t.hyperplanes, err = NewHyperplanes(numHyper, numFeat)
+	t.hyperplanes, err = newHyperplanes(numHyper, numFeat)
 	if err != nil {
 		return nil, err
 	}
 
 	t.table = make(map[uint64][]uint64)
+	t.docs = make(map[uint64]uint64)
 	return t, nil
+}
+
+func (t *table) index(d *Document) error {
+	if _, exists := t.docs[d.uid]; exists {
+		return errDocumentExists
+	}
+
+	hash, err := t.hyperplanes.hash(d.features)
+	if err != nil {
+		return err
+	}
+	uids := t.table[hash]
+
+	if len(uids) == 0 {
+		t.table[hash] = []uint64{d.uid}
+	} else {
+		// insert in sorted uid order
+		for i := 0; i < len(uids)-1; i++ {
+			if d.uid > uids[i] && d.uid < uids[i+1] {
+				uids = append(uids, 0)
+				copy(uids[i+2:], uids[i+1:len(uids)-1])
+				uids[i+1] = d.uid
+				t.table[hash] = uids
+				t.docs[d.uid] = hash
+				return nil
+			}
+		}
+
+		// uid is greater than all uids in key
+		t.table[hash] = append(t.table[hash], d.uid)
+	}
+	t.docs[d.uid] = hash
+	return nil
+}
+
+func (t *table) delete(uid uint64) error {
+	hash, exists := t.docs[uid]
+	if !exists {
+		return errDocumentNotStored
+	}
+
+	uids, exists := t.table[hash]
+	if !exists {
+		return errHashNotFound
+	}
+
+	for i := 0; i < len(uids); i++ {
+		if uids[i] == uid {
+			uids[i] = uids[len(uids)-1]
+			if len(uids) == 1 {
+				delete(t.table, hash)
+			} else {
+				t.table[hash] = uids[:len(uids)-1]
+			}
+			delete(t.docs, uid)
+			return nil
+		}
+	}
+	return errDocumentNotStored
+}
+
+func (t *table) search(f []float64, numToReturn int) ([]uint64, error) {
+	hash, err := t.hyperplanes.hash(f)
+	if err != nil {
+		return nil, err
+	}
+	out := t.table[hash]
+	if len(out) > numToReturn {
+		return out[:numToReturn], nil
+	}
+	return out, nil
 }
