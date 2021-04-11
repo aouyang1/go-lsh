@@ -2,6 +2,7 @@ package lsh
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"testing"
 
@@ -92,13 +93,8 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []uint64{0, 1, 2}
-	if len(uids) != len(expected) {
-		t.Fatalf("expected %d results, but got %d", len(docs), len(expected))
-	}
-	for i, uid := range uids {
-		if uid != expected[i] {
-			t.Fatalf("expected %v, but got %v", expected, uids)
-		}
+	if err := compareUint64s(expected, uids); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := lsh.Delete(2); err != nil {
@@ -110,13 +106,20 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected = []uint64{0, 1, 3}
-	if len(uids) != len(expected) {
-		t.Fatalf("expected %d results, but got %d", len(docs), len(expected))
+	if err := compareUint64s(expected, uids); err != nil {
+		t.Fatal(err)
 	}
-	for i, uid := range uids {
-		if uid != expected[i] {
-			t.Fatalf("expected %v, but got %v", expected, uids)
-		}
+
+	if err := lsh.Index(NewDocument(2, []float64{0, 0, 3})); err != nil {
+		t.Fatal(err)
+	}
+	uids, err = lsh.Search([]float64{0, 0, 0.1}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = []uint64{0, 1, 2}
+	if err := compareUint64s(expected, uids); err != nil {
+		t.Fatal(err)
 	}
 
 }
@@ -169,4 +172,16 @@ func BenchmarkHyperplanHash(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func compareUint64s(expected, uids []uint64) error {
+	if len(uids) != len(expected) {
+		return fmt.Errorf("expected %d results, but got %d", len(expected), len(uids))
+	}
+	for i, uid := range uids {
+		if uid != expected[i] {
+			return fmt.Errorf("expected %v, but got %v", expected, uids)
+		}
+	}
+	return nil
 }
