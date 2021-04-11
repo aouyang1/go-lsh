@@ -77,10 +77,10 @@ func TestLSH(t *testing.T) {
 	}
 
 	docs := []*Document{
-		{0, []float64{0, 0, 1}},
-		{1, []float64{0, 0, 2}},
-		{2, []float64{0, 0, 3}},
-		{3, []float64{0, 0, 5}},
+		{0, []float64{0, 0, 5}},
+		{1, []float64{0, 0.1, 3}},
+		{2, []float64{0, 0.1, 2}},
+		{3, []float64{0, 0.1, 1}},
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -88,12 +88,12 @@ func TestLSH(t *testing.T) {
 		}
 	}
 
-	uids, err := lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	scores, err := lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected := []uint64{0, 1, 2}
-	if err := compareUint64s(expected, uids); err != nil {
+	if err := compareUint64s(expected, scores.UIDs()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,24 +101,24 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uids, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	scores, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected = []uint64{0, 1, 3}
-	if err := compareUint64s(expected, uids); err != nil {
+	if err := compareUint64s(expected, scores.UIDs()); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := lsh.Index(NewDocument(2, []float64{0, 0, 3})); err != nil {
+	if err := lsh.Index(NewDocument(2, []float64{0, 0.1, 2})); err != nil {
 		t.Fatal(err)
 	}
-	uids, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	scores, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected = []uint64{0, 1, 2}
-	if err := compareUint64s(expected, uids); err != nil {
+	if err := compareUint64s(expected, scores.UIDs()); err != nil {
 		t.Fatal(err)
 	}
 
