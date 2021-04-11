@@ -4,10 +4,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 
 	"gonum.org/v1/gonum/floats"
+	"gonum.org/v1/gonum/stat"
 )
 
 const (
@@ -92,7 +94,7 @@ func (l *LSH) Index(d *Document) error {
 		return errInvalidDocument
 	}
 
-	floats.Scale(floats.Norm(d.features, 2), d.features)
+	floats.Scale(1.0/floats.Norm(d.features, 2), d.features)
 
 	for _, t := range l.tables {
 		if err := t.index(d); err != nil {
@@ -112,16 +114,16 @@ func (l *LSH) Delete(uid uint64) error {
 	return err
 }
 
-func (l *LSH) Search(f []float64, numToReturn int) ([]uint64, error) {
+func (l *LSH) Search(f []float64, numToReturn int, threshold float64) ([]uint64, error) {
 	if len(f) != l.opt.NumFeatures {
 		return nil, errInvalidDocument
 	}
 
-	floats.Scale(floats.Norm(f, 2), f)
+	floats.Scale(1.0/floats.Norm(f, 2), f)
 
 	res := make(map[uint64]struct{})
 	for _, t := range l.tables {
-		uids, err := t.search(f, numToReturn)
+		uids, err := t.search(f, numToReturn, threshold)
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +217,7 @@ func NewDocument(uid uint64, f []float64) *Document {
 type table struct {
 	hyperplanes *hyperplanes
 	table       map[uint64][]uint64
-	docs        map[uint64]uint64
+	docs        map[uint64]*tableDoc
 }
 
 func newTable(numHyper, numFeat int) (*table, error) {
@@ -228,7 +230,7 @@ func newTable(numHyper, numFeat int) (*table, error) {
 	}
 
 	t.table = make(map[uint64][]uint64)
-	t.docs = make(map[uint64]uint64)
+	t.docs = make(map[uint64]*tableDoc)
 	return t, nil
 }
 
@@ -253,7 +255,7 @@ func (t *table) index(d *Document) error {
 				copy(uids[i+2:], uids[i+1:len(uids)-1])
 				uids[i+1] = d.uid
 				t.table[hash] = uids
-				t.docs[d.uid] = hash
+				t.docs[d.uid] = newTableDoc(d, hash)
 				return nil
 			}
 		}
@@ -261,15 +263,16 @@ func (t *table) index(d *Document) error {
 		// uid is greater than all uids in key
 		t.table[hash] = append(t.table[hash], d.uid)
 	}
-	t.docs[d.uid] = hash
+	t.docs[d.uid] = newTableDoc(d, hash)
 	return nil
 }
 
 func (t *table) delete(uid uint64) error {
-	hash, exists := t.docs[uid]
+	tdoc, exists := t.docs[uid]
 	if !exists {
 		return errDocumentNotStored
 	}
+	hash := tdoc.hash
 
 	uids, exists := t.table[hash]
 	if !exists {
@@ -291,14 +294,44 @@ func (t *table) delete(uid uint64) error {
 	return errDocumentNotStored
 }
 
-func (t *table) search(f []float64, numToReturn int) ([]uint64, error) {
+func (t *table) search(f []float64, numToReturn int, threshold float64) ([]uint64, error) {
 	hash, err := t.hyperplanes.hash(f)
 	if err != nil {
 		return nil, err
 	}
-	out := t.table[hash]
+	uids := t.table[hash]
+	out := make([]uint64, 0, numToReturn)
+	for _, uid := range uids {
+		tdoc, exists := t.docs[uid]
+		if !exists || tdoc == nil {
+			continue
+		}
+		score := stat.Correlation(f, tdoc.features(), nil)
+		if math.Abs(score) >= threshold {
+			out = append(out, uid)
+		}
+	}
 	if len(out) > numToReturn {
 		return out[:numToReturn], nil
 	}
 	return out, nil
+}
+
+type tableDoc struct {
+	hash uint64
+	doc  *Document
+}
+
+func newTableDoc(d *Document, hash uint64) *tableDoc {
+	return &tableDoc{hash, d}
+}
+
+func (t *tableDoc) features() []float64 {
+	if t == nil {
+		return nil
+	}
+	if t.doc == nil {
+		return nil
+	}
+	return t.doc.features
 }

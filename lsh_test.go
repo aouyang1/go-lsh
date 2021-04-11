@@ -88,7 +88,7 @@ func TestLSH(t *testing.T) {
 		}
 	}
 
-	uids, err := lsh.Search([]float64{0, 0, 0.1}, 3)
+	uids, err := lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uids, err = lsh.Search([]float64{0, 0, 0.1}, 3)
+	uids, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestLSH(t *testing.T) {
 	if err := lsh.Index(NewDocument(2, []float64{0, 0, 3})); err != nil {
 		t.Fatal(err)
 	}
-	uids, err = lsh.Search([]float64{0, 0, 0.1}, 3)
+	uids, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
 	if err != nil {
 		t.Fatal(err)
 	}
