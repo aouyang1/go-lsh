@@ -1,12 +1,11 @@
 package lsh
 
 import (
-	"container/heap"
-	"encoding/binary"
+	"encoding/gob"
 	"errors"
 	"fmt"
-	"math"
-	"math/rand"
+	"os"
+	"sync"
 
 	"github.com/RoaringBitmap/roaring/roaring64"
 	"gonum.org/v1/gonum/floats"
@@ -66,9 +65,9 @@ func (o *Options) Validate() error {
 }
 
 type LSH struct {
-	opt    *Options
-	tables []*table
-	docs   map[uint64]*Document
+	Opt    *Options
+	Tables []*Table
+	Docs   map[uint64]*Document
 }
 
 func NewLSH(opt *Options) (*LSH, error) {
@@ -76,346 +75,229 @@ func NewLSH(opt *Options) (*LSH, error) {
 		return nil, err
 	}
 	l := new(LSH)
-	l.opt = opt
+	l.Opt = opt
 
 	var err error
 
-	l.tables = make([]*table, l.opt.NumTables)
-	for i := 0; i < l.opt.NumTables; i++ {
-		l.tables[i], err = newTable(l.opt.NumHyperplanes, l.opt.NumFeatures)
+	l.Tables = make([]*Table, l.Opt.NumTables)
+	for i := 0; i < l.Opt.NumTables; i++ {
+		l.Tables[i], err = NewTable(l.Opt.NumHyperplanes, l.Opt.NumFeatures)
 		if err != nil {
 			return nil, err
 		}
 	}
-	l.docs = make(map[uint64]*Document)
+	l.Docs = make(map[uint64]*Document)
 	return l, nil
 }
 
+// Index stores the document in the LSH data structure. Returns an error if the document
+// is already present and will attempt to rollback any changes to other tables.
 func (l *LSH) Index(d *Document) error {
-	if len(d.features) != l.opt.NumFeatures {
+	if len(d.Features) != l.Opt.NumFeatures {
 		return errInvalidDocument
 	}
 
-	floats.Scale(1.0/floats.Norm(d.features, 2), d.features)
+	floats.Scale(1.0/floats.Norm(d.Features, 2), d.Features)
 
-	for i, t := range l.tables {
+	for i, t := range l.Tables {
 		if err := t.index(d); err != nil {
 			// attempt to roll back removing added document to other tables
 			var derr error
 			for j := 0; j < i; j++ {
-				if e := l.tables[j].delete(d.uid); e != nil {
+				if e := l.Tables[j].delete(d.UID); e != nil {
 					derr = e
 				}
 			}
 			return fmt.Errorf("%v, %v", err, derr)
 		}
 	}
-	l.docs[d.uid] = d
+	l.Docs[d.UID] = d
 	return nil
 }
 
 // Delete attempts to remove the uid from the tables and also the document map
 func (l *LSH) Delete(uid uint64) error {
 	var err error
-	for _, t := range l.tables {
+	for _, t := range l.Tables {
 		if e := t.delete(uid); e != nil {
 			err = e
 		}
 	}
-	delete(l.docs, uid)
+	delete(l.Docs, uid)
 	return err
 }
 
+// Search looks through and merges results from all tables to find the nearest neighbors to the
+// provided feature vector
 func (l *LSH) Search(f []float64, numToReturn int, threshold float64) (Scores, error) {
-	if len(f) != l.opt.NumFeatures {
+	if len(f) != l.Opt.NumFeatures {
 		return nil, errInvalidDocument
 	}
 
 	floats.Scale(1.0/floats.Norm(f, 2), f)
 
 	rbRes := roaring64.New()
-	for _, t := range l.tables {
-		hash, err := t.hyperplanes.hash(f)
+	for _, t := range l.Tables {
+		hash, err := t.Hyperplanes.hash(f)
 		if err != nil {
 			return nil, err
 		}
-		rb := t.table[hash]
+		rb := t.Table[hash]
 		if rb == nil {
 			// feature vector hash not present in hyperplane partition
 			continue
 		}
-		rbRes.Or(rb)
+		rb.mu.Lock()
+		rbRes.Or(rb.Rb)
+		rb.mu.Unlock()
 	}
 
 	res := NewResults(numToReturn, threshold, SignFilter_ANY)
 
 	for _, uid := range rbRes.ToArray() {
-		doc, exists := l.docs[uid]
+		doc, exists := l.Docs[uid]
 		if !exists || doc == nil {
 			continue
 		}
-		score := stat.Correlation(f, doc.Features(), nil)
+		score := stat.Correlation(f, doc.Features, nil)
 		res.Update(Score{uid, score})
 	}
 	return res.Fetch(), nil
 }
 
-type Score struct {
-	UID   uint64  `json:"uid"`
-	Score float64 `json:"score"`
-}
-
-// Scores is a slice of individual Score's
-type Scores []Score
-
-func (s Scores) Len() int {
-	return len(s)
-}
-
-func (s Scores) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s Scores) Less(i, j int) bool {
-	return math.Abs(s[i].Score) < math.Abs(s[j].Score)
-}
-
-// Push implements the function in the heap interface
-func (s *Scores) Push(x interface{}) {
-	*s = append(*s, x.(Score))
-}
-
-// Pop implements the function in the heap interface
-func (s *Scores) Pop() interface{} {
-	x := (*s)[len(*s)-1]
-	*s = (*s)[:len(*s)-1]
-	return x
-}
-
-func (s Scores) UIDs() []uint64 {
-	out := make([]uint64, 0, len(s))
-	for _, score := range s {
-		out = append(out, score.UID)
+func (l *LSH) Save(filepath string) error {
+	f, err := os.Create(filepath)
+	if err != nil {
+		return err
 	}
-	return out
-}
+	defer f.Close()
 
-func (s Scores) Scores() []float64 {
-	out := make([]float64, 0, len(s))
-	for _, score := range s {
-		out = append(out, score.Score)
+	enc := gob.NewEncoder(f)
+
+	if err := enc.Encode(l); err != nil {
+		return err
 	}
-	return out
+	return nil
 }
 
-type Results struct {
-	TopN       int
-	Threshold  float64
-	SignFilter SignFilter
-	scores     Scores
-}
-
-type SignFilter int
-
-const (
-	SignFilter_POS = 1
-	SignFilter_NEG = -1
-	SignFilter_ANY = 0
-)
-
-// NewResults creates a new instance of results to track these similar features
-func NewResults(topN int, threshold float64, signFilter SignFilter) *Results {
-	scores := make(Scores, 0, topN)
-
-	// Build priority queue of size TopN so that we don't have to sort over the entire
-	// score output
-	heap.Init(&scores)
-
-	return &Results{
-		TopN:       topN,
-		Threshold:  threshold,
-		SignFilter: signFilter,
-		scores:     scores,
+func (l *LSH) Load(filepath string) error {
+	f, err := os.Open(filepath)
+	if err != nil {
+		return err
 	}
-}
+	defer f.Close()
 
-// passed checks if the input score satisfies the Results lag and threshold requirements
-func (r *Results) passed(s Score) bool {
-	return math.Abs(float64(s.Score)) >= r.Threshold &&
-		(r.SignFilter == SignFilter_ANY ||
-			(s.Score > 0 && r.SignFilter == SignFilter_POS) ||
-			(s.Score < 0 && r.SignFilter == SignFilter_NEG))
-}
+	dec := gob.NewDecoder(f)
 
-// Update records the input score
-func (r *Results) Update(s Score) {
-	if !r.passed(s) {
-		return
-	}
-	if r.scores.Len() == r.TopN {
-		if math.Abs(s.Score) > math.Abs(r.scores[0].Score) {
-			heap.Pop(&r.scores)
-			heap.Push(&r.scores, s)
-		}
-	} else {
-		heap.Push(&r.scores, s)
-	}
-}
-
-// Fetch returns the sorted scores in ascending order
-func (r *Results) Fetch() Scores {
-	s := make(Scores, len(r.scores))
-	var score Score
-	numScores := len(r.scores)
-
-	for i := numScores - 1; i >= 0; i-- {
-		score = heap.Pop(&r.scores).(Score)
-		s[i] = score
-	}
-	return s
-}
-
-type hyperplanes struct {
-	planes [][]float64
-	buffer []byte
-}
-
-func newHyperplanes(numHyperplanes, numFeatures int) (*hyperplanes, error) {
-	if numHyperplanes < 1 {
-		return nil, errInvalidNumHyperplanes
+	var lsh LSH
+	if err := dec.Decode(&lsh); err != nil {
+		return err
 	}
 
-	if numFeatures < 1 {
-		return nil, errInvalidNumFeatures
-	}
-
-	h := new(hyperplanes)
-	h.buffer = make([]byte, 8)
-	h.planes = make([][]float64, numHyperplanes)
-	for i := 0; i < numHyperplanes; i++ {
-		h.planes[i] = make([]float64, numFeatures)
-		for j := 0; j < numFeatures; j++ {
-			h.planes[i][j] = rand.Float64()
-		}
-		floats.Scale(1/floats.Norm(h.planes[i], 2), h.planes[i])
-	}
-
-	return h, nil
+	*l = lsh
+	return nil
 }
 
-func (h *hyperplanes) hash(f []float64) (uint64, error) {
-	if len(f) == 0 {
-		return 0, errNoFeatures
-	}
-
-	bs := h.buffer
-	var b byte
-	var bitCnt, byteCnt int
-
-	for _, p := range h.planes {
-		if len(f) != len(p) {
-			return 0, fmt.Errorf("%v, has length %d when expecting length, %d", errFeatureLengthMismatch, len(f), len(p))
-		}
-		if floats.Dot(p, f) > 0 {
-			b = b | byte(1)<<(8-bitCnt-1)
-		}
-		bitCnt++
-		if bitCnt == 8 {
-			bs[byteCnt] = b
-			bitCnt = 0
-			b = 0
-			byteCnt++
-		}
-	}
-
-	// didn't fill a full byte
-	if bitCnt != 0 {
-		bs[byteCnt] = b
-	}
-	return binary.BigEndian.Uint64(bs), nil
+type Table struct {
+	Hyperplanes *Hyperplanes
+	Table       map[uint64]*Bitmap
+	Doc2Hash    map[uint64]uint64
 }
 
-type Document struct {
-	uid      uint64
-	features []float64
-}
-
-func NewDocument(uid uint64, f []float64) *Document {
-	return &Document{
-		uid:      uid,
-		features: f,
-	}
-}
-
-func (d *Document) Features() []float64 {
-	return d.features
-}
-
-func (d *Document) UID() uint64 {
-	return d.uid
-}
-
-type table struct {
-	hyperplanes *hyperplanes
-	table       map[uint64]*roaring64.Bitmap
-	doc2hash    map[uint64]uint64
-}
-
-func newTable(numHyper, numFeat int) (*table, error) {
-	t := new(table)
+func NewTable(numHyper, numFeat int) (*Table, error) {
+	t := new(Table)
 
 	var err error
-	t.hyperplanes, err = newHyperplanes(numHyper, numFeat)
+	t.Hyperplanes, err = NewHyperplanes(numHyper, numFeat)
 	if err != nil {
 		return nil, err
 	}
 
-	t.table = make(map[uint64]*roaring64.Bitmap)
-	t.doc2hash = make(map[uint64]uint64)
+	t.Table = make(map[uint64]*Bitmap)
+	t.Doc2Hash = make(map[uint64]uint64)
 	return t, nil
 }
 
-func (t *table) index(d *Document) error {
-	if _, exists := t.doc2hash[d.uid]; exists {
+func (t *Table) index(d *Document) error {
+	if _, exists := t.Doc2Hash[d.UID]; exists {
 		return errDocumentExists
 	}
 
-	hash, err := t.hyperplanes.hash(d.features)
+	hash, err := t.Hyperplanes.hash(d.Features)
 	if err != nil {
 		return err
 	}
-	rb, exists := t.table[hash]
+	rb, exists := t.Table[hash]
 	if !exists || rb == nil {
-		rb = roaring64.New()
-		t.table[hash] = rb
+		rb = newBitmap()
+		t.Table[hash] = rb
 	}
 
-	if !rb.CheckedAdd(d.uid) {
-		return fmt.Errorf("unable to add %d to bitmap at hash, %d", d.uid, hash)
+	if !rb.CheckedAdd(d.UID) {
+		return fmt.Errorf("unable to add %d to bitmap at hash, %d", d.UID, hash)
 	}
 
-	t.doc2hash[d.uid] = hash
+	t.Doc2Hash[d.UID] = hash
 	return nil
 }
 
-func (t *table) delete(uid uint64) error {
-	hash, exists := t.doc2hash[uid]
+func (t *Table) delete(uid uint64) error {
+	hash, exists := t.Doc2Hash[uid]
 	if !exists {
 		return errDocumentNotStored
 	}
 
-	rb, exists := t.table[hash]
+	rb, exists := t.Table[hash]
 	if !exists {
 		return errHashNotFound
 	}
 
 	if !rb.CheckedRemove(uid) {
-		return fmt.Errorf("unable to remove %d to bitmap at hash, %d", uid, hash)
+		return fmt.Errorf("unable to remove %d from bitmap at hash, %d", uid, hash)
 	}
 
 	if rb.IsEmpty() {
-		delete(t.table, hash)
+		delete(t.Table, hash)
 	}
-	delete(t.doc2hash, uid)
+	delete(t.Doc2Hash, uid)
 	return nil
+}
+
+type Bitmap struct {
+	mu sync.Mutex
+	Rb *roaring64.Bitmap
+}
+
+func newBitmap() *Bitmap {
+	return &Bitmap{Rb: roaring64.New()}
+}
+
+func (b *Bitmap) CheckedAdd(uid uint64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Rb.CheckedAdd(uid)
+}
+
+func (b *Bitmap) CheckedRemove(uid uint64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Rb.CheckedRemove(uid)
+}
+
+func (b *Bitmap) IsEmpty() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Rb.IsEmpty()
+}
+
+type Document struct {
+	UID      uint64
+	Features []float64
+}
+
+func NewDocument(uid uint64, f []float64) *Document {
+	return &Document{
+		UID:      uid,
+		Features: f,
+	}
 }
