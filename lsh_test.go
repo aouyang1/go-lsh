@@ -126,13 +126,10 @@ func TestSaveLoadLSH(t *testing.T) {
 
 	lshFile := "test.lsh"
 	if err := lsh.Save(lshFile); err != nil {
-		if _, serr := os.Stat(lshFile); serr == nil {
-			if rerr := os.Remove(lshFile); rerr != nil {
-				t.Fatalf("%v, %v", err, rerr)
-			}
-		}
+		os.Remove(lshFile)
 		t.Fatal(err)
 	}
+	defer os.Remove(lshFile)
 
 	newLsh := new(LSH)
 	if err := newLsh.Load(lshFile); err != nil {
@@ -147,8 +144,8 @@ func TestSaveLoadLSH(t *testing.T) {
 	if err := compareUint64s(expected, scores.UIDs()); err != nil {
 		t.Fatal(err)
 	}
-
 }
+
 func compareUint64s(expected, uids []uint64) error {
 	if len(uids) != len(expected) {
 		return fmt.Errorf("expected %d results, but got %d", len(expected), len(uids))
