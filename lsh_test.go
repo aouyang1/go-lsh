@@ -119,6 +119,16 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	so.Threshold = 1
+	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = []uint64{0}
+	if err := compareUint64s(expected, scores.UIDs()); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func TestSaveLoadLSH(t *testing.T) {
