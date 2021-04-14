@@ -28,7 +28,6 @@ var (
 	ErrNoFeatureComplexity       = errors.New("features do not have enough complexity with a standard deviation of 0")
 	ErrFeatureLengthMismatch     = errors.New("feature slice length mismatch")
 	ErrNoFeatures                = errors.New("no features provided")
-	ErrDocumentExists            = errors.New("document already exists")
 	ErrDocumentNotStored         = errors.New("document id is not stored")
 	ErrHashNotFound              = errors.New("hash not found in table")
 	ErrInvalidNumToReturn        = errors.New("invalid NumToReturn, must be at least 1")
@@ -296,7 +295,7 @@ func NewTable(numHyper, numFeat int) (*Table, error) {
 
 func (t *Table) index(d *Document) error {
 	if _, exists := t.Doc2Hash[d.UID]; exists {
-		return ErrDocumentExists
+		return ErrDuplicateDocument
 	}
 
 	hash, err := t.Hyperplanes.hash(d.Features)

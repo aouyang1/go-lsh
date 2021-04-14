@@ -225,6 +225,67 @@ func TestIndex(t *testing.T) {
 	}
 }
 
+func TestDelete(t *testing.T) {
+	opt := NewDefaultOptions()
+	lsh, err := New(opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	docs := []*Document{
+		{0, []float64{0, 1, 3}},
+		{1, []float64{1, 3, 3}},
+		{2, []float64{3, 3, 0}},
+		{3, []float64{1, 2, 3}},
+	}
+
+	for _, d := range docs {
+		if err := lsh.Index(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := lsh.Delete(2); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := lsh.Delete(2); err != ErrDocumentNotStored {
+		t.Fatalf("expected %v but got %v error", ErrDocumentNotStored, err)
+	}
+}
+
+func TestSearch(t *testing.T) {
+	opt := NewDefaultOptions()
+	lsh, err := New(opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	docs := []*Document{
+		{0, []float64{0, 1, 3}},
+		{1, []float64{1, 3, 3}},
+		{2, []float64{3, 3, 0}},
+		{3, []float64{1, 2, 3}},
+	}
+
+	for _, d := range docs {
+		if err := lsh.Index(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	so := NewDefaultSearchOptions()
+	if _, err := lsh.Search([]float64{1, 2}, so); err != ErrInvalidDocument {
+		t.Fatalf("expected %v, but got %v error", ErrInvalidDocument, err)
+	}
+
+	so.NumToReturn = 0
+	if _, err := lsh.Search([]float64{1, 2, 3}, so); err != ErrInvalidNumToReturn {
+		t.Fatalf("expected %v, but got %v error", ErrInvalidNumToReturn, err)
+	}
+
+}
+
 func compareUint64s(expected, uids []uint64) error {
 	if len(uids) != len(expected) {
 		return fmt.Errorf("expected %d results, but got %d", len(expected), len(uids))

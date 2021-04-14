@@ -3,14 +3,25 @@ package lsh
 import (
 	"encoding/binary"
 	"math"
+	"strings"
 	"testing"
 
 	"gonum.org/v1/gonum/floats"
 )
 
 func TestNewHyperplanes(t *testing.T) {
-	nf := 7
+	if _, err := NewHyperplanes(0, 7); err != ErrInvalidNumHyperplanes {
+		t.Error(err)
+		return
+	}
+
+	if _, err := NewHyperplanes(5, 0); err != ErrInvalidNumFeatures {
+		t.Error(err)
+		return
+	}
+
 	nh := 4
+	nf := 7
 	h, err := NewHyperplanes(nh, nf)
 	if err != nil {
 		t.Error(err)
@@ -34,6 +45,21 @@ func TestNewHyperplanes(t *testing.T) {
 }
 
 func TestHyperplaneHash(t *testing.T) {
+	h := &Hyperplanes{
+		Planes: [][]float64{
+			{0, 0, 1},
+			{0, 1, 0},
+			{1, 0, 0},
+		},
+		Buffer: make([]byte, 8),
+	}
+	if _, err := h.hash([]float64{}); err != ErrNoFeatures {
+		t.Fatal(err)
+	}
+	if _, err := h.hash([]float64{1, 2}); !strings.Contains(err.Error(), ErrFeatureLengthMismatch.Error()) {
+		t.Fatal(err)
+	}
+
 	testData := []struct {
 		f    []float64
 		hash uint64
@@ -45,15 +71,6 @@ func TestHyperplaneHash(t *testing.T) {
 		{[]float64{-math.Sqrt(1.0 / 3.0), -math.Sqrt(1.0 / 3.0), -math.Sqrt(1.0 / 3.0)}, binary.BigEndian.Uint64([]byte{0, 0, 0, 0, 0, 0, 0, 0})},
 		{[]float64{0, 0, -1}, binary.BigEndian.Uint64([]byte{0, 0, 0, 0, 0, 0, 0, 0})},
 	}
-	h := &Hyperplanes{
-		Planes: [][]float64{
-			{0, 0, 1},
-			{0, 1, 0},
-			{1, 0, 0},
-		},
-		Buffer: make([]byte, 8),
-	}
-
 	for _, td := range testData {
 		hash, err := h.hash(td.f)
 		if err != nil {
