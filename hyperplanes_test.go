@@ -43,6 +43,7 @@ func TestHyperplaneHash(t *testing.T) {
 		{[]float64{1, 0, 0}, binary.BigEndian.Uint64([]byte{32, 0, 0, 0, 0, 0, 0, 0})},
 		{[]float64{math.Sqrt(1.0 / 3.0), math.Sqrt(1.0 / 3.0), math.Sqrt(1.0 / 3.0)}, binary.BigEndian.Uint64([]byte{224, 0, 0, 0, 0, 0, 0, 0})},
 		{[]float64{-math.Sqrt(1.0 / 3.0), -math.Sqrt(1.0 / 3.0), -math.Sqrt(1.0 / 3.0)}, binary.BigEndian.Uint64([]byte{0, 0, 0, 0, 0, 0, 0, 0})},
+		{[]float64{0, 0, -1}, binary.BigEndian.Uint64([]byte{0, 0, 0, 0, 0, 0, 0, 0})},
 	}
 	h := &Hyperplanes{
 		Planes: [][]float64{

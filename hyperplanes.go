@@ -15,11 +15,11 @@ type Hyperplanes struct {
 
 func NewHyperplanes(numHyperplanes, numFeatures int) (*Hyperplanes, error) {
 	if numHyperplanes < 1 {
-		return nil, errInvalidNumHyperplanes
+		return nil, ErrInvalidNumHyperplanes
 	}
 
 	if numFeatures < 1 {
-		return nil, errInvalidNumFeatures
+		return nil, ErrInvalidNumFeatures
 	}
 
 	h := new(Hyperplanes)
@@ -38,7 +38,7 @@ func NewHyperplanes(numHyperplanes, numFeatures int) (*Hyperplanes, error) {
 
 func (h *Hyperplanes) hash(f []float64) (uint64, error) {
 	if len(f) == 0 {
-		return 0, errNoFeatures
+		return 0, ErrNoFeatures
 	}
 
 	bs := h.Buffer
@@ -47,7 +47,7 @@ func (h *Hyperplanes) hash(f []float64) (uint64, error) {
 
 	for _, p := range h.Planes {
 		if len(f) != len(p) {
-			return 0, fmt.Errorf("%v, has length %d when expecting length, %d", errFeatureLengthMismatch, len(f), len(p))
+			return 0, fmt.Errorf("%v, has length %d when expecting length, %d", ErrFeatureLengthMismatch, len(f), len(p))
 		}
 		if floats.Dot(p, f) > 0 {
 			b = b | byte(1)<<(8-bitCnt-1)

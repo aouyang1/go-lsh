@@ -18,25 +18,32 @@ const (
 )
 
 var (
-	errExceededMaxNumHyperplanes = fmt.Errorf("number of hyperplanes exceeded max of, %d", MaxNumHyperplanes)
-	errInvalidNumHyperplanes     = errors.New("invalid number of hyperplanes, must be at least 1")
-	errInvalidNumTables          = errors.New("invalid number of tables, must be at least 1")
-	errInvalidNumFeatures        = errors.New("invalid number of features, must be at least 1")
-	errInvalidDocument           = errors.New("number of features does not match with the configured options")
-	errNoOptions                 = errors.New("no options set for LSH")
-	errFeatureLengthMismatch     = errors.New("feature slice length mismatch")
-	errNoFeatures                = errors.New("no features provided")
-	errDocumentExists            = errors.New("document already exists")
-	errDocumentNotStored         = errors.New("document id is not stored")
-	errHashNotFound              = errors.New("hash not found in table")
+	ErrExceededMaxNumHyperplanes = fmt.Errorf("number of hyperplanes exceeded max of, %d", MaxNumHyperplanes)
+	ErrInvalidNumHyperplanes     = errors.New("invalid number of hyperplanes, must be at least 1")
+	ErrInvalidNumTables          = errors.New("invalid number of tables, must be at least 1")
+	ErrInvalidNumFeatures        = errors.New("invalid number of features, must be at least 1")
+	ErrInvalidDocument           = errors.New("number of features does not match with the configured options")
+	ErrDuplicateDocument         = errors.New("document is already indexed")
+	ErrNoOptions                 = errors.New("no options set for LSH")
+	ErrNoFeatureComplexity       = errors.New("features do not have enough complexity with a standard deviation of 0")
+	ErrFeatureLengthMismatch     = errors.New("feature slice length mismatch")
+	ErrNoFeatures                = errors.New("no features provided")
+	ErrDocumentExists            = errors.New("document already exists")
+	ErrDocumentNotStored         = errors.New("document id is not stored")
+	ErrHashNotFound              = errors.New("hash not found in table")
+	ErrInvalidNumToReturn        = errors.New("invalid NumToReturn, must be at least 1")
+	ErrInvalidThreshold          = errors.New("invalid threshold, must be between 0 and 1 inclusive")
+	ErrInvalidSignFilter         = errors.New("invalid sign filter, must be any, neg, or pos")
 )
 
+// Options represents a set of parameters that configure the LSH tables
 type Options struct {
 	NumHyperplanes int
 	NumTables      int
 	NumFeatures    int
 }
 
+// NewDefaultOptions returns a set of default options to create the LSH tables
 func NewDefaultOptions() *Options {
 	return &Options{
 		NumHyperplanes: 32,
@@ -45,32 +52,36 @@ func NewDefaultOptions() *Options {
 	}
 }
 
+// Validate returns an error if any of the LSH options are invalid
 func (o *Options) Validate() error {
 	if o.NumHyperplanes < 1 {
-		return errInvalidNumHyperplanes
+		return ErrInvalidNumHyperplanes
 	}
 	if o.NumHyperplanes > MaxNumHyperplanes {
-		return errExceededMaxNumHyperplanes
+		return ErrExceededMaxNumHyperplanes
 	}
 
 	if o.NumTables < 1 {
-		return errInvalidNumTables
+		return ErrInvalidNumTables
 	}
 
 	if o.NumFeatures < 1 {
-		return errInvalidNumFeatures
+		return ErrInvalidNumFeatures
 	}
 
 	return nil
 }
 
+// LSH represents the locality sensitive hash struct that stores the multiple tables containing
+// the configured number of hyperplanes along with the documents currently indexed.
 type LSH struct {
 	Opt    *Options
 	Tables []*Table
 	Docs   map[uint64]*Document
 }
 
-func NewLSH(opt *Options) (*LSH, error) {
+// New returns a new Locality Sensitive Hash struct ready for indexing and searching
+func New(opt *Options) (*LSH, error) {
 	if err := opt.Validate(); err != nil {
 		return nil, err
 	}
@@ -86,6 +97,12 @@ func NewLSH(opt *Options) (*LSH, error) {
 			return nil, err
 		}
 	}
+
+	// TODO: instead of storing the original document, we should store the document with the
+	// uid along with values that are needed to compute the pearson correlation between 2 samples.
+	// This means storage of the docs scale linearly by number of documents and not by number of
+	// documents AND number of features per document. Computation time per correlation should be
+	// reduced as well.
 	l.Docs = make(map[uint64]*Document)
 	return l, nil
 }
@@ -94,9 +111,14 @@ func NewLSH(opt *Options) (*LSH, error) {
 // is already present and will attempt to rollback any changes to other tables.
 func (l *LSH) Index(d *Document) error {
 	if len(d.Features) != l.Opt.NumFeatures {
-		return errInvalidDocument
+		return ErrInvalidDocument
 	}
-
+	if stat.StdDev(d.Features, nil) == 0 {
+		return ErrNoFeatureComplexity
+	}
+	if _, exists := l.Docs[d.UID]; exists {
+		return ErrDuplicateDocument
+	}
 	floats.Scale(1.0/floats.Norm(d.Features, 2), d.Features)
 
 	for i, t := range l.Tables {
@@ -127,20 +149,76 @@ func (l *LSH) Delete(uid uint64) error {
 	return err
 }
 
+// SearchOptions represent a set of parameters to be used to customize search results
+type SearchOptions struct {
+	NumToReturn int        `json:"num_to_return"`
+	Threshold   float64    `json:"threshold"`
+	SignFilter  SignFilter `json:"sign_filter"`
+}
+
+// Validate returns an error if any of the input options are invalid
+func (s *SearchOptions) Validate() error {
+	if s.NumToReturn < 1 {
+		return ErrInvalidNumToReturn
+	}
+	if s.Threshold < 0 || s.Threshold > 1 {
+		return ErrInvalidThreshold
+	}
+	switch s.SignFilter {
+	case SignFilter_ANY, SignFilter_NEG, SignFilter_POS:
+	default:
+		return ErrInvalidSignFilter
+	}
+	return nil
+}
+
+// NewDefaultSearchOptions returns a default set of parameters to be used for search
+func NewDefaultSearchOptions() *SearchOptions {
+	return &SearchOptions{
+		NumToReturn: 10,
+		Threshold:   0.85,
+		SignFilter:  SignFilter_ANY,
+	}
+}
+
 // Search looks through and merges results from all tables to find the nearest neighbors to the
 // provided feature vector
-func (l *LSH) Search(f []float64, numToReturn int, threshold float64) (Scores, error) {
+func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, error) {
 	if len(f) != l.Opt.NumFeatures {
-		return nil, errInvalidDocument
+		return nil, ErrInvalidDocument
 	}
 
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
 	floats.Scale(1.0/floats.Norm(f, 2), f)
 
+	res := NewResults(s.NumToReturn, s.Threshold, SignFilter_POS)
+
+	// search for positively correlated results
+	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
+		if err := l.search(f, res); err != nil {
+			return nil, err
+		}
+	}
+
+	// search for negatively correlated results
+	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
+		floats.Scale(-1, f)
+		if err := l.search(f, res); err != nil {
+			return nil, err
+		}
+	}
+
+	return res.Fetch(), nil
+}
+
+func (l *LSH) search(f []float64, res *Results) error {
 	rbRes := roaring64.New()
 	for _, t := range l.Tables {
 		hash, err := t.Hyperplanes.hash(f)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		rb := t.Table[hash]
 		if rb == nil {
@@ -152,8 +230,6 @@ func (l *LSH) Search(f []float64, numToReturn int, threshold float64) (Scores, e
 		rb.mu.Unlock()
 	}
 
-	res := NewResults(numToReturn, threshold, SignFilter_ANY)
-
 	for _, uid := range rbRes.ToArray() {
 		doc, exists := l.Docs[uid]
 		if !exists || doc == nil {
@@ -162,7 +238,7 @@ func (l *LSH) Search(f []float64, numToReturn int, threshold float64) (Scores, e
 		score := stat.Correlation(f, doc.Features, nil)
 		res.Update(Score{uid, score})
 	}
-	return res.Fetch(), nil
+	return nil
 }
 
 func (l *LSH) Save(filepath string) error {
@@ -220,7 +296,7 @@ func NewTable(numHyper, numFeat int) (*Table, error) {
 
 func (t *Table) index(d *Document) error {
 	if _, exists := t.Doc2Hash[d.UID]; exists {
-		return errDocumentExists
+		return ErrDocumentExists
 	}
 
 	hash, err := t.Hyperplanes.hash(d.Features)
@@ -244,12 +320,12 @@ func (t *Table) index(d *Document) error {
 func (t *Table) delete(uid uint64) error {
 	hash, exists := t.Doc2Hash[uid]
 	if !exists {
-		return errDocumentNotStored
+		return ErrDocumentNotStored
 	}
 
 	rb, exists := t.Table[hash]
 	if !exists {
-		return errHashNotFound
+		return ErrHashNotFound
 	}
 
 	if !rb.CheckedRemove(uid) {

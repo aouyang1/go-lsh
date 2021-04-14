@@ -16,10 +16,10 @@ func TestNewOptions(t *testing.T) {
 	}{
 		{1, 1, 1, nil},
 		{3, 5, 2, nil},
-		{0, 0, 0, errInvalidNumHyperplanes},
-		{3, 65, 2, errExceededMaxNumHyperplanes},
-		{0, 5, 2, errInvalidNumFeatures},
-		{3, 5, 0, errInvalidNumTables},
+		{0, 0, 0, ErrInvalidNumHyperplanes},
+		{3, 65, 2, ErrExceededMaxNumHyperplanes},
+		{0, 5, 2, ErrInvalidNumFeatures},
+		{3, 5, 0, ErrInvalidNumTables},
 	}
 	for _, td := range testData {
 		opt := &Options{td.nh, td.nt, td.nf}
@@ -32,7 +32,7 @@ func TestNewOptions(t *testing.T) {
 
 func TestNewLSH(t *testing.T) {
 	opt := NewDefaultOptions()
-	lsh, err := NewLSH(opt)
+	lsh, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestNewLSH(t *testing.T) {
 
 func TestLSH(t *testing.T) {
 	opt := NewDefaultOptions()
-	lsh, err := NewLSH(opt)
+	lsh, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +53,7 @@ func TestLSH(t *testing.T) {
 		{1, []float64{0, 0.1, 3}},
 		{2, []float64{0, 0.1, 2}},
 		{3, []float64{0, 0.1, 1}},
+		{4, []float64{0, -0.1, -4}},
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -60,7 +61,11 @@ func TestLSH(t *testing.T) {
 		}
 	}
 
-	scores, err := lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	so := NewDefaultSearchOptions()
+	so.NumToReturn = 3
+	so.SignFilter = SignFilter_POS
+
+	scores, err := lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +78,7 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scores, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +90,7 @@ func TestLSH(t *testing.T) {
 	if err := lsh.Index(NewDocument(2, []float64{0, 0.1, 2})); err != nil {
 		t.Fatal(err)
 	}
-	scores, err = lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +99,31 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	so.SignFilter = SignFilter_NEG
+	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = []uint64{4}
+	if err := compareUint64s(expected, scores.UIDs()); err != nil {
+		t.Fatal(err)
+	}
+
+	so.SignFilter = SignFilter_ANY
+	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = []uint64{0, 4, 1}
+	if err := compareUint64s(expected, scores.UIDs()); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 func TestSaveLoadLSH(t *testing.T) {
 	opt := NewDefaultOptions()
-	lsh, err := NewLSH(opt)
+	lsh, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +140,11 @@ func TestSaveLoadLSH(t *testing.T) {
 		}
 	}
 
-	scores, err := lsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	so := NewDefaultSearchOptions()
+	so.NumToReturn = 3
+	so.SignFilter = SignFilter_POS
+
+	scores, err := lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,13 +165,63 @@ func TestSaveLoadLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scores, err = newLsh.Search([]float64{0, 0, 0.1}, 3, 0.65)
+	scores, err = newLsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected = []uint64{0, 1, 2}
 	if err := compareUint64s(expected, scores.UIDs()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSearchOptionsValidate(t *testing.T) {
+	testData := []struct {
+		numToReturn int
+		threshold   float64
+		signFilter  SignFilter
+
+		expectedErr error
+	}{
+		{0, 0.65, SignFilter_ANY, ErrInvalidNumToReturn},
+		{1, 1.3, SignFilter_ANY, ErrInvalidThreshold},
+		{1, 0.65, SignFilter(2), ErrInvalidSignFilter},
+		{1, 0.65, SignFilter_ANY, nil},
+	}
+
+	for _, td := range testData {
+		s := &SearchOptions{
+			NumToReturn: td.numToReturn,
+			Threshold:   td.threshold,
+			SignFilter:  td.signFilter,
+		}
+		if err := s.Validate(); err != td.expectedErr {
+			t.Errorf("expected %v, but got %v for error", td.expectedErr, err)
+			continue
+		}
+	}
+}
+
+func TestIndex(t *testing.T) {
+	opt := NewDefaultOptions()
+	lsh, err := New(opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	testData := []struct {
+		doc         *Document
+		expectedErr error
+	}{
+		{&Document{0, []float64{0, 1}}, ErrInvalidDocument},
+		{&Document{1, []float64{3, 3, 3}}, ErrNoFeatureComplexity},
+		{&Document{2, []float64{3, 3, 0}}, nil},
+		{&Document{2, []float64{1, 2, 3}}, ErrDuplicateDocument},
+	}
+	for _, td := range testData {
+		if err := lsh.Index(td.doc); err != td.expectedErr {
+			t.Errorf("expected %v, but got %v for error", td.expectedErr, err)
+		}
 	}
 }
 
