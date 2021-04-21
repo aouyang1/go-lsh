@@ -15,6 +15,12 @@ import (
 const (
 	// key value is expected to be at most 64 bits
 	MaxNumHyperplanes = 64
+
+	// default label to use if none specified
+	DefaultLabel = "__DEFAULT__"
+
+	// default value to use if none specified
+	DefaultValue = "__DEFAULT__"
 )
 
 var (
@@ -75,8 +81,8 @@ func (o *Options) Validate() error {
 // the configured number of hyperplanes along with the documents currently indexed.
 type LSH struct {
 	Opt    *Options
-	Tables []*Table
-	Docs   map[uint64]*Document
+	Tables map[string]map[string][]*Table // label to value to a set of tables
+	Docs   map[uint64]Document
 }
 
 // New returns a new Locality Sensitive Hash struct ready for indexing and searching
@@ -87,61 +93,86 @@ func New(opt *Options) (*LSH, error) {
 	l := new(LSH)
 	l.Opt = opt
 
-	var err error
-
-	l.Tables = make([]*Table, l.Opt.NumTables)
-	for i := 0; i < l.Opt.NumTables; i++ {
-		l.Tables[i], err = NewTable(l.Opt.NumHyperplanes, l.Opt.NumFeatures)
-		if err != nil {
-			return nil, err
-		}
-	}
+	l.Tables = make(map[string]map[string][]*Table)
 
 	// TODO: instead of storing the original document, we should store the document with the
 	// uid along with values that are needed to compute the pearson correlation between 2 samples.
 	// This means storage of the docs scale linearly by number of documents and not by number of
 	// documents AND number of features per document. Computation time per correlation should be
 	// reduced as well.
-	l.Docs = make(map[uint64]*Document)
+	l.Docs = make(map[uint64]Document)
 	return l, nil
 }
 
 // Index stores the document in the LSH data structure. Returns an error if the document
-// is already present and will attempt to rollback any changes to other tables.
-func (l *LSH) Index(d *Document) error {
-	if len(d.Features) != l.Opt.NumFeatures {
+// is already present. If byLabels is nil the default label used is an empty string which would
+// be the default label/value keyspace documents are indexed. Setting byLabels permits
+// more scoped queries while searching e.g. find similar features with label = foo, value = bar.
+func (l *LSH) Index(d Document, byLabels []string) error {
+	uid := d.GetUID()
+	feat := d.GetFeatures()
+	if len(feat) != l.Opt.NumFeatures {
 		return ErrInvalidDocument
 	}
-	if stat.StdDev(d.Features, nil) == 0 {
+	if stat.StdDev(feat, nil) == 0 {
 		return ErrNoFeatureComplexity
 	}
-	if _, exists := l.Docs[d.UID]; exists {
+	if _, exists := l.Docs[uid]; exists {
 		return ErrDuplicateDocument
 	}
-	floats.Scale(1.0/floats.Norm(d.Features, 2), d.Features)
+	floats.Scale(1.0/floats.Norm(feat, 2), feat)
 
-	for i, t := range l.Tables {
-		if err := t.index(d); err != nil {
-			// attempt to roll back removing added document to other tables
-			var derr error
-			for j := 0; j < i; j++ {
-				if e := l.Tables[j].delete(d.UID); e != nil {
-					derr = e
-				}
-			}
-			return fmt.Errorf("%v, %v", err, derr)
+	if byLabels == nil {
+		byLabels = []string{DefaultLabel}
+	}
+	for _, label := range byLabels {
+		if err := l.index(d, label); err != nil {
+			return err
 		}
 	}
-	l.Docs[d.UID] = d
+	l.Docs[uid] = d
+	return nil
+}
+
+func (l *LSH) index(d Document, label string) error {
+	var err error
+
+	v, exists := d.GetLabel(label)
+	if !exists {
+		v = DefaultValue
+	}
+	values, exists := l.Tables[label]
+	if !exists {
+		values = make(map[string][]*Table)
+		l.Tables[label] = values
+	}
+
+	tables, exists := values[v]
+	if !exists {
+		tables, err = NewTables(l.Opt)
+		if err != nil {
+			return err
+		}
+		l.Tables[label] = map[string][]*Table{v: tables}
+	}
+	for _, t := range tables {
+		if err := t.index(d); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // Delete attempts to remove the uid from the tables and also the document map
 func (l *LSH) Delete(uid uint64) error {
 	var err error
-	for _, t := range l.Tables {
-		if e := t.delete(uid); e != nil {
-			err = e
+	for _, values := range l.Tables {
+		for _, tables := range values {
+			for _, t := range tables {
+				if e := t.delete(uid); e != nil {
+					err = e
+				}
+			}
 		}
 	}
 	delete(l.Docs, uid)
@@ -150,9 +181,10 @@ func (l *LSH) Delete(uid uint64) error {
 
 // SearchOptions represent a set of parameters to be used to customize search results
 type SearchOptions struct {
-	NumToReturn int        `json:"num_to_return"`
-	Threshold   float64    `json:"threshold"`
-	SignFilter  SignFilter `json:"sign_filter"`
+	Query       map[string][]string `json:"query"`
+	NumToReturn int                 `json:"num_to_return"`
+	Threshold   float64             `json:"threshold"`
+	SignFilter  SignFilter          `json:"sign_filter"`
 }
 
 // Validate returns an error if any of the input options are invalid
@@ -171,7 +203,8 @@ func (s *SearchOptions) Validate() error {
 	return nil
 }
 
-// NewDefaultSearchOptions returns a default set of parameters to be used for search
+// NewDefaultSearchOptions returns a default set of parameters to be used for search. If query
+// is not set then the search will be performed across all label value tables.
 func NewDefaultSearchOptions() *SearchOptions {
 	return &SearchOptions{
 		NumToReturn: 10,
@@ -196,7 +229,7 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, error) {
 
 	// search for positively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		if err := l.search(f, res); err != nil {
+		if err := l.search(s.Query, f, res); err != nil {
 			return nil, err
 		}
 	}
@@ -204,7 +237,7 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, error) {
 	// search for negatively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
 		floats.Scale(-1, f)
-		if err := l.search(f, res); err != nil {
+		if err := l.search(s.Query, f, res); err != nil {
 			return nil, err
 		}
 	}
@@ -212,35 +245,80 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, error) {
 	return res.Fetch(), nil
 }
 
-func (l *LSH) search(f []float64, res *Results) error {
+func (l *LSH) search(query map[string][]string, f []float64, res *Results) error {
 	rbRes := roaring64.New()
-	for _, t := range l.Tables {
-		hash, err := t.Hyperplanes.hash(f)
-		if err != nil {
-			return err
+
+	// search across all label value tables
+	if query == nil {
+		query = make(map[string][]string)
+		for label, valTables := range l.Tables {
+			query[label] = make([]string, 0, len(valTables))
+			for value := range valTables {
+				query[label] = append(query[label], value)
+			}
 		}
-		rb := t.Table[hash]
-		if rb == nil {
-			// feature vector hash not present in hyperplane partition
-			continue
-		}
-		rb.mu.Lock()
-		rbRes.Or(rb.Rb)
-		rb.mu.Unlock()
 	}
 
-	for _, uid := range rbRes.ToArray() {
-		doc, exists := l.Docs[uid]
-		if !exists || doc == nil {
+	// if label is specified but values is of length 0 then search across all values with
+	// that label
+	for label, values := range query {
+		if len(values) > 0 {
 			continue
 		}
-		score := stat.Correlation(f, doc.Features, nil)
-		res.Update(Score{uid, score})
+		valTables, exists := l.Tables[label]
+		if !exists {
+			continue
+		}
+
+		query[label] = make([]string, 0, len(valTables))
+		for val := range valTables {
+			query[label] = append(query[label], val)
+		}
+	}
+
+	// search through each label and value tables
+	for label, values := range query {
+		valTables, exists := l.Tables[label]
+		if !exists {
+			continue
+		}
+		for _, v := range values {
+			tables, exists := valTables[v]
+			if !exists {
+				continue
+			}
+			for _, t := range tables {
+				hash, err := t.Hyperplanes.hash(f)
+				if err != nil {
+					return err
+				}
+				rb := t.Table[hash]
+				if rb == nil {
+					// feature vector hash not present in hyperplane partition
+					continue
+				}
+				rb.mu.Lock()
+				rbRes.Or(rb.Rb)
+				rb.mu.Unlock()
+			}
+
+			for _, uid := range rbRes.ToArray() {
+				doc, exists := l.Docs[uid]
+				if !exists || doc == nil {
+					continue
+				}
+				score := stat.Correlation(f, doc.GetFeatures(), nil)
+				res.Update(Score{uid, score})
+			}
+		}
 	}
 	return nil
 }
 
-func (l *LSH) Save(filepath string) error {
+// Save takes a filepath and a document interface representing the indexed documents
+// and saves the lsh index to disk. Only one type of document is currently supported
+// which will be registered with gob to encode and save to disk.
+func (l *LSH) Save(filepath string, d Document) error {
 	f, err := os.Create(filepath)
 	if err != nil {
 		return err
@@ -248,6 +326,7 @@ func (l *LSH) Save(filepath string) error {
 	defer f.Close()
 
 	enc := gob.NewEncoder(f)
+	d.Register()
 
 	if err := enc.Encode(l); err != nil {
 		return err
@@ -273,6 +352,19 @@ func (l *LSH) Load(filepath string) error {
 	return nil
 }
 
+func NewTables(opt *Options) ([]*Table, error) {
+	var err error
+
+	tables := make([]*Table, opt.NumTables)
+	for i := 0; i < opt.NumTables; i++ {
+		tables[i], err = NewTable(opt.NumHyperplanes, opt.NumFeatures)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return tables, err
+}
+
 type Table struct {
 	Hyperplanes *Hyperplanes
 	Table       map[uint64]*Bitmap
@@ -293,12 +385,14 @@ func NewTable(numHyper, numFeat int) (*Table, error) {
 	return t, nil
 }
 
-func (t *Table) index(d *Document) error {
-	if _, exists := t.Doc2Hash[d.UID]; exists {
+func (t *Table) index(d Document) error {
+	uid := d.GetUID()
+	feat := d.GetFeatures()
+	if _, exists := t.Doc2Hash[uid]; exists {
 		return ErrDuplicateDocument
 	}
 
-	hash, err := t.Hyperplanes.hash(d.Features)
+	hash, err := t.Hyperplanes.hash(feat)
 	if err != nil {
 		return err
 	}
@@ -308,11 +402,11 @@ func (t *Table) index(d *Document) error {
 		t.Table[hash] = rb
 	}
 
-	if !rb.CheckedAdd(d.UID) {
-		return fmt.Errorf("unable to add %d to bitmap at hash, %d", d.UID, hash)
+	if !rb.CheckedAdd(uid) {
+		return fmt.Errorf("unable to add %d to bitmap at hash, %d", uid, hash)
 	}
 
-	t.Doc2Hash[d.UID] = hash
+	t.Doc2Hash[uid] = hash
 	return nil
 }
 
@@ -363,16 +457,4 @@ func (b *Bitmap) IsEmpty() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.Rb.IsEmpty()
-}
-
-type Document struct {
-	UID      uint64
-	Features []float64
-}
-
-func NewDocument(uid uint64, f []float64) *Document {
-	return &Document{
-		UID:      uid,
-		Features: f,
-	}
 }
