@@ -51,8 +51,8 @@ type Options struct {
 // NewDefaultOptions returns a set of default options to create the LSH tables
 func NewDefaultOptions() *Options {
 	return &Options{
-		NumHyperplanes: 32,
-		NumTables:      3,
+		NumHyperplanes: 8,  // more hyperplanes increases false negatives decrease number of direct comparisons
+		NumTables:      10, // more tables means we'll decrease false negatives at the cost of more direct comparisons
 		NumFeatures:    3,
 	}
 }
@@ -153,7 +153,7 @@ func (l *LSH) index(d Document, label string) error {
 		if err != nil {
 			return err
 		}
-		l.Tables[label] = map[string][]*Table{v: tables}
+		values[v] = tables
 	}
 	for _, t := range tables {
 		if err := t.index(d); err != nil {
@@ -301,17 +301,18 @@ func (l *LSH) search(query map[string][]string, f []float64, res *Results) error
 				rbRes.Or(rb.Rb)
 				rb.mu.Unlock()
 			}
-
-			for _, uid := range rbRes.ToArray() {
-				doc, exists := l.Docs[uid]
-				if !exists || doc == nil {
-					continue
-				}
-				score := stat.Correlation(f, doc.GetFeatures(), nil)
-				res.Update(Score{uid, score})
-			}
 		}
 	}
+
+	for _, uid := range rbRes.ToArray() {
+		doc, exists := l.Docs[uid]
+		if !exists || doc == nil {
+			continue
+		}
+		score := stat.Correlation(f, doc.GetFeatures(), nil)
+		res.Update(Score{uid, score})
+	}
+
 	return nil
 }
 
