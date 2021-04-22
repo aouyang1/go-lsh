@@ -359,6 +359,17 @@ func TestSearch(t *testing.T) {
 				{UID: 5, Score: 0.99},
 			},
 		},
+		{
+			[]float64{-7, 9, -7},
+			SignFilter_POS,
+			map[string][]string{"host": {}},
+			Scores{
+				{UID: 6, Score: 1.00},
+				{UID: 7, Score: 0.99},
+				{UID: 5, Score: 0.99},
+				{UID: 4, Score: 0.99},
+			},
+		},
 	}
 
 	for _, td := range testData {
