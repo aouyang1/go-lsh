@@ -10,6 +10,7 @@ type Results struct {
 	Threshold  float64
 	SignFilter SignFilter
 	scores     Scores
+	NumScored  int
 }
 
 type SignFilter int
@@ -46,6 +47,7 @@ func (r *Results) passed(s Score) bool {
 
 // Update records the input score
 func (r *Results) Update(s Score) {
+	r.NumScored++
 	if !r.passed(s) {
 		return
 	}

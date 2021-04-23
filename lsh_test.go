@@ -3,8 +3,13 @@ package lsh
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"testing"
+	"time"
+
+	"gonum.org/v1/gonum/floats"
+	"gonum.org/v1/gonum/stat"
 )
 
 func TestNewOptions(t *testing.T) {
@@ -63,7 +68,7 @@ func TestLSH(t *testing.T) {
 	so.NumToReturn = 3
 	so.SignFilter = SignFilter_POS
 
-	scores, err := lsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err := lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +81,7 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err = lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +93,7 @@ func TestLSH(t *testing.T) {
 	if err := lsh.Index(NewSimpleDocument(2, []float64{0, 0.1, 2}, nil), nil); err != nil {
 		t.Fatal(err)
 	}
-	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err = lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +103,7 @@ func TestLSH(t *testing.T) {
 	}
 
 	so.SignFilter = SignFilter_NEG
-	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err = lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +113,7 @@ func TestLSH(t *testing.T) {
 	}
 
 	so.SignFilter = SignFilter_ANY
-	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err = lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +123,7 @@ func TestLSH(t *testing.T) {
 	}
 
 	so.Threshold = 1
-	scores, err = lsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err = lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +157,7 @@ func TestSaveLoadLSH(t *testing.T) {
 	so.NumToReturn = 3
 	so.SignFilter = SignFilter_POS
 
-	scores, err := lsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err := lsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +178,7 @@ func TestSaveLoadLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	scores, err = newLsh.Search([]float64{0, 0, 0.1}, so)
+	scores, _, err = newLsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,12 +300,12 @@ func TestSearch(t *testing.T) {
 	}
 
 	so := NewDefaultSearchOptions()
-	if _, err := lsh.Search([]float64{1, 2}, so); err != ErrInvalidDocument {
+	if _, _, err := lsh.Search([]float64{1, 2}, so); err != ErrInvalidDocument {
 		t.Fatalf("expected %v, but got %v error", ErrInvalidDocument, err)
 	}
 
 	so.NumToReturn = 0
-	if _, err := lsh.Search([]float64{1, 2, 3}, so); err != ErrInvalidNumToReturn {
+	if _, _, err := lsh.Search([]float64{1, 2, 3}, so); err != ErrInvalidNumToReturn {
 		t.Fatalf("expected %v, but got %v error", ErrInvalidNumToReturn, err)
 	}
 
@@ -375,7 +380,7 @@ func TestSearch(t *testing.T) {
 	for _, td := range testData {
 		so.SignFilter = td.sf
 		so.Query = td.q
-		res, err := lsh.Search(td.f, so)
+		res, _, err := lsh.Search(td.f, so)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -384,6 +389,71 @@ func TestSearch(t *testing.T) {
 		}
 	}
 
+}
+
+func TestLSHError(t *testing.T) {
+	numHyperplanes := 8
+	numTables := 3
+	numIter := 100
+	numFeatures := 10
+	numDocs := 100000
+	threshold := 0.85
+
+	opt := NewDefaultOptions()
+	opt.NumHyperplanes = numHyperplanes
+	opt.NumTables = numTables
+	opt.NumFeatures = numFeatures
+
+	lsh, err := New(opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	features := make([][]float64, numDocs)
+	for i := 0; i < numDocs; i++ {
+		features[i] = make([]float64, numFeatures)
+		for j := 0; j < numFeatures; j++ {
+			features[i][j] = rand.Float64() - 0.5
+		}
+		floats.Scale(1/floats.Norm(features[i], 2), features[i])
+	}
+
+	start := time.Now()
+	for i, f := range features {
+		if err := lsh.Index(NewSimpleDocument(uint64(i), f, nil), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("index time: %v\n", time.Since(start))
+
+	so := NewDefaultSearchOptions()
+	so.NumToReturn = numDocs
+	so.SignFilter = SignFilter_POS
+	so.Threshold = threshold
+
+	f := make([]float64, numFeatures)
+	scored := make([]float64, 0, numIter)
+	counts := make([]float64, 0, numIter)
+	scores := make([]float64, 0, numIter)
+	for i := 0; i < numIter; i++ {
+		for j := 0; j < numFeatures; j++ {
+			f[j] = rand.Float64() - 0.5
+		}
+		floats.Scale(1/floats.Norm(f, 2), f)
+		res, nscored, err := lsh.Search(f, so)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scored = append(scored, float64(nscored))
+		counts = append(counts, float64(len(res)))
+		if len(res) > 0 {
+			scores = append(scores, res[len(res)-1].Score)
+		}
+	}
+	nsm, nsstd := stat.MeanStdDev(scored, nil)
+	cm, cstd := stat.MeanStdDev(counts, nil)
+	sm, sstd := stat.MeanStdDev(scores, nil)
+	t.Logf("iterations: %d, num_scored: %d +/-%d, count: %d +/-%d, low_scores: %.3f +/-%.3f\n", numIter, int(nsm), int(nsstd), int(cm), int(cstd), sm, sstd)
 }
 
 func compareUint64s(expected, uids []uint64) error {

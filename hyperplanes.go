@@ -28,7 +28,7 @@ func NewHyperplanes(numHyperplanes, numFeatures int) (*Hyperplanes, error) {
 	for i := 0; i < numHyperplanes; i++ {
 		h.Planes[i] = make([]float64, numFeatures)
 		for j := 0; j < numFeatures; j++ {
-			h.Planes[i][j] = rand.Float64()
+			h.Planes[i][j] = rand.Float64() - 0.5
 		}
 		floats.Scale(1/floats.Norm(h.Planes[i], 2), h.Planes[i])
 	}
