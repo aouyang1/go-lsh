@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/RoaringBitmap/roaring/roaring64"
@@ -50,8 +51,8 @@ type Options struct {
 // NewDefaultOptions returns a set of default options to create the LSH tables
 func NewDefaultOptions() *Options {
 	return &Options{
-		NumHyperplanes: 8,  // more hyperplanes increases false negatives decrease number of direct comparisons
-		NumTables:      10, // more tables means we'll decrease false negatives at the cost of more direct comparisons
+		NumHyperplanes: 8,   // more hyperplanes increases false negatives decrease number of direct comparisons
+		NumTables:      128, // more tables means we'll decrease false negatives at the cost of more direct comparisons
 		NumFeatures:    3,
 	}
 }
@@ -352,4 +353,44 @@ func (l *LSH) Load(filepath string) error {
 
 	*l = lsh
 	return nil
+}
+
+// Statistics returns the total number of indexed documents along with a slice of the false negative
+// errors for a variety of query thresholds. This can help determine if the configured number of
+// hyperplanes and tables can give the desired results for a given threshold.
+type Statistics struct {
+	NumDocs             int                  `json:"num_docs"`
+	FalseNegativeErrors []FalseNegativeError `json:"false_negative_errors"`
+}
+
+// FalseNegativeError represents the probability that a document will be missed during a search when it
+// should be found. This document should match with the query document, but due to the number of
+// hyperplanes, number of tables and the desired threshold will not with this probability. Closer to
+// zero means there's less chance for missing document results and closer to 1 means a higher liklihood
+// of missing the documents in the search.
+type FalseNegativeError struct {
+	Threshold   float64 `json:"threshold"`
+	Probability float64 `json:"probability"`
+}
+
+// Stats returns the current statistics about the configured LSH struct.
+func (l *LSH) Stats() *Statistics {
+	s := new(Statistics)
+	s.NumDocs = len(l.Docs)
+
+	thetaInc := 0.05
+	thetaStart := 0.60
+	thetaEnd := 1.0
+
+	// compute false negative errors for various thresholds
+	s.FalseNegativeErrors = make([]FalseNegativeError, 0, int((thetaEnd-thetaStart)/thetaInc))
+	for theta := thetaStart; theta < thetaEnd; theta += thetaInc {
+		pdiff := 2 / math.Pi * math.Acos(theta)
+		psame := 1 - pdiff
+
+		fneg := math.Pow((1 - math.Pow(psame, float64(l.Opt.NumHyperplanes))), float64(l.Opt.NumTables))
+
+		s.FalseNegativeErrors = append(s.FalseNegativeErrors, FalseNegativeError{theta, fneg})
+	}
+	return s
 }

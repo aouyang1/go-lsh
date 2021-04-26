@@ -456,6 +456,55 @@ func TestLSHError(t *testing.T) {
 	t.Logf("iterations: %d, num_scored: %d +/-%d, count: %d +/-%d, low_scores: %.3f +/-%.3f\n", numIter, int(nsm), int(nsstd), int(cm), int(cstd), sm, sstd)
 }
 
+func TestLSHStats(t *testing.T) {
+	opt := NewDefaultOptions()
+	lsh, err := New(opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	docs := []SimpleDocument{
+		{0, []float64{0, 0, 5}, nil},
+		{1, []float64{0, 0.1, 3}, nil},
+		{2, []float64{0, 0.1, 2}, nil},
+		{3, []float64{0, 0.1, 1}, nil},
+		{4, []float64{0, -0.1, -4}, nil},
+	}
+	for _, d := range docs {
+		if err := lsh.Index(d, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := lsh.Stats()
+	expectedS := &Statistics{
+		NumDocs: len(docs),
+		FalseNegativeErrors: []FalseNegativeError{
+			{0.60, 0.903},
+			{0.65, 0.804},
+			{0.70, 0.636},
+			{0.75, 0.395},
+			{0.80, 0.149},
+			{0.85, 0.018},
+			{0.90, 0.000},
+			{0.95, 0.000},
+		},
+	}
+	if s.NumDocs != expectedS.NumDocs {
+		t.Fatalf("expected %d, but got %d docs", expectedS.NumDocs, s.NumDocs)
+	}
+	if len(s.FalseNegativeErrors) != len(expectedS.FalseNegativeErrors) {
+		t.Fatalf("expected %d, but got %d false negative errors", len(expectedS.FalseNegativeErrors), len(s.FalseNegativeErrors))
+	}
+	for i, fne := range s.FalseNegativeErrors {
+		if math.Abs(fne.Threshold-expectedS.FalseNegativeErrors[i].Threshold) > 0.01 {
+			t.Errorf("expected %.02f, but got %.02f threshold", expectedS.FalseNegativeErrors[i].Threshold, fne.Threshold)
+		}
+		if math.Abs(fne.Probability-expectedS.FalseNegativeErrors[i].Probability) > 0.001 {
+			t.Errorf("expected %.03f, but got %.03f probability", expectedS.FalseNegativeErrors[i].Probability, fne.Probability)
+		}
+	}
+}
 func compareUint64s(expected, uids []uint64) error {
 	if len(uids) != len(expected) {
 		return fmt.Errorf("expected %d results, but got %d", len(expected), len(uids))
