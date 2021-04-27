@@ -1,18 +1,30 @@
 package lsh
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/RoaringBitmap/roaring/roaring64"
 )
 
-func NewTables(opt *Options) ([]*Table, error) {
+var (
+	ErrNoHyperplanes              = errors.New("no hyperplanes provided to creation of new tables")
+	ErrTableToHyperplanesMismatch = errors.New("number of hyperplane tables does not match configured tables in options")
+)
+
+func NewTables(opt *Options, ht []*Hyperplanes) ([]*Table, error) {
 	var err error
+	if ht == nil {
+		return nil, ErrNoHyperplanes
+	}
+	if len(ht) != opt.NumTables {
+		return nil, ErrTableToHyperplanesMismatch
+	}
 
 	tables := make([]*Table, opt.NumTables)
 	for i := 0; i < opt.NumTables; i++ {
-		tables[i], err = NewTable(opt.NumHyperplanes, opt.NumFeatures)
+		tables[i], err = NewTable(ht[i])
 		if err != nil {
 			return nil, err
 		}
@@ -26,11 +38,11 @@ type Table struct {
 	Doc2Hash    map[uint64]uint64
 }
 
-func NewTable(numHyper, numFeat int) (*Table, error) {
+func NewTable(h *Hyperplanes) (*Table, error) {
 	t := new(Table)
 
 	var err error
-	t.Hyperplanes, err = NewHyperplanes(numHyper, numFeat)
+	t.Hyperplanes = h
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +59,7 @@ func (t *Table) index(d Document) error {
 		return ErrDuplicateDocument
 	}
 
-	hash, err := t.Hyperplanes.hash(feat)
+	hash, err := t.Hyperplanes.Hash64(feat)
 	if err != nil {
 		return err
 	}

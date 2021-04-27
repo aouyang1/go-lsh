@@ -80,9 +80,10 @@ func (o *Options) Validate() error {
 // LSH represents the locality sensitive hash struct that stores the multiple tables containing
 // the configured number of hyperplanes along with the documents currently indexed.
 type LSH struct {
-	Opt    *Options
-	Tables map[string]map[string][]*Table // label to value to a set of tables
-	Docs   map[uint64]Document
+	Opt              *Options
+	HyperplaneTables []*Hyperplanes
+	Tables           map[string]map[string][]*Table // label to value to a set of tables
+	Docs             map[uint64]Document
 }
 
 // New returns a new Locality Sensitive Hash struct ready for indexing and searching
@@ -95,11 +96,14 @@ func New(opt *Options) (*LSH, error) {
 
 	l.Tables = make(map[string]map[string][]*Table)
 
-	// TODO: instead of storing the original document, we should store the document with the
-	// uid along with values that are needed to compute the pearson correlation between 2 samples.
-	// This means storage of the docs scale linearly by number of documents and not by number of
-	// documents AND number of features per document. Computation time per correlation should be
-	// reduced as well.
+	l.HyperplaneTables = make([]*Hyperplanes, 0, opt.NumTables)
+	for i := 0; i < opt.NumTables; i++ {
+		ht, err := NewHyperplanes(opt.NumHyperplanes, opt.NumFeatures)
+		if err != nil {
+			return nil, err
+		}
+		l.HyperplaneTables = append(l.HyperplaneTables, ht)
+	}
 	l.Docs = make(map[uint64]Document)
 	return l, nil
 }
@@ -149,7 +153,7 @@ func (l *LSH) index(d Document, label string) error {
 
 	tables, exists := values[v]
 	if !exists {
-		tables, err = NewTables(l.Opt)
+		tables, err = NewTables(l.Opt, l.HyperplaneTables)
 		if err != nil {
 			return err
 		}
@@ -288,7 +292,7 @@ func (l *LSH) search(query map[string][]string, f []float64, res *Results) error
 				continue
 			}
 			for _, t := range tables {
-				hash, err := t.Hyperplanes.hash(f)
+				hash, err := t.Hyperplanes.Hash64(f)
 				if err != nil {
 					return err
 				}
