@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	// key value is expected to be at most 64 bits
-	MaxNumHyperplanes = 64
+	// key value is expected to be at most 8 bits
+	MaxNumHyperplanes = 8
 
 	// default label to use if none specified
 	DefaultLabel = "__DEFAULT__"
@@ -224,9 +224,14 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
 		return nil, 0, ErrInvalidDocument
 	}
 
-	if err := s.Validate(); err != nil {
-		return nil, 0, err
+	if s == nil {
+		s = NewDefaultSearchOptions()
+	} else {
+		if err := s.Validate(); err != nil {
+			return nil, 0, err
+		}
 	}
+
 	floats.Scale(1.0/floats.Norm(f, 2), f)
 
 	res := NewResults(s.NumToReturn, s.Threshold, SignFilter_POS)
@@ -250,10 +255,11 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
 }
 
 func (l *LSH) search(query map[string][]string, f []float64, res *Results) error {
-	rbRes := roaring64.New()
+	var fullSearch bool
 
-	// search across all label value tables
 	if query == nil {
+		// search across all label value tables
+		fullSearch = true
 		query = make(map[string][]string)
 		for label, valTables := range l.Tables {
 			query[label] = make([]string, 0, len(valTables))
@@ -280,19 +286,25 @@ func (l *LSH) search(query map[string][]string, f []float64, res *Results) error
 		}
 	}
 
+	rbRes := roaring64.New()
+
 	// search through each label and value tables
 	for label, values := range query {
 		valTables, exists := l.Tables[label]
 		if !exists {
 			continue
 		}
+
+		rbTables := roaring64.New()
+		// or through all values in label
 		for _, v := range values {
 			tables, exists := valTables[v]
 			if !exists {
 				continue
 			}
+
 			for _, t := range tables {
-				hash, err := t.Hyperplanes.Hash64(f)
+				hash, err := t.Hyperplanes.Hash8(f)
 				if err != nil {
 					return err
 				}
@@ -302,9 +314,16 @@ func (l *LSH) search(query map[string][]string, f []float64, res *Results) error
 					continue
 				}
 				rb.mu.Lock()
-				rbRes.Or(rb.Rb)
+				rbTables.Or(rb.Rb)
 				rb.mu.Unlock()
 			}
+		}
+		if rbRes.IsEmpty() || fullSearch {
+			// first time populating or a full index search
+			rbRes.Or(rbTables)
+		} else {
+			// query specifies some specificity with label/value
+			rbRes.And(rbTables)
 		}
 	}
 

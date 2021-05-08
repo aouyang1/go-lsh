@@ -385,7 +385,7 @@ func TestSearch(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := compareScores(res, td.expected); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%v, %v", err, td)
 		}
 	}
 
@@ -530,4 +530,132 @@ func compareScores(res, expected Scores) error {
 		}
 	}
 	return nil
+}
+
+func BenchmarkLSHIndex(b *testing.B) {
+	opt := NewDefaultOptions()
+	opt.NumFeatures = 60
+	lsh, err := New(opt)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	for i := 0; i < b.N; i++ {
+		feat := make([]float64, opt.NumFeatures)
+		for j := 0; j < opt.NumFeatures; j++ {
+			feat[j] = rand.Float64()
+		}
+
+		doc := SimpleDocument{uint64(i), feat, nil}
+		if err := lsh.Index(doc, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLSHSearch(b *testing.B) {
+	opt := NewDefaultOptions()
+	opt.NumFeatures = 60
+	opt.NumHyperplanes = 1
+	lsh, err := New(opt)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	numDocuments := 10000
+	for n := 0; n < numDocuments; n++ {
+		feat := make([]float64, opt.NumFeatures)
+		for j := 0; j < opt.NumFeatures; j++ {
+			feat[j] = rand.Float64()
+		}
+
+		doc := SimpleDocument{uint64(n), feat, nil}
+		if err := lsh.Index(doc, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	query := make([]float64, opt.NumFeatures)
+	for j := 0; j < opt.NumFeatures; j++ {
+		query[j] = rand.Float64()
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := lsh.Search(query, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLSHSearchPos(b *testing.B) {
+	opt := NewDefaultOptions()
+	opt.NumFeatures = 60
+	lsh, err := New(opt)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	numDocuments := 10000
+	for n := 0; n < numDocuments; n++ {
+		feat := make([]float64, opt.NumFeatures)
+		for j := 0; j < opt.NumFeatures; j++ {
+			feat[j] = rand.Float64()
+		}
+
+		doc := SimpleDocument{uint64(n), feat, nil}
+		if err := lsh.Index(doc, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	query := make([]float64, opt.NumFeatures)
+	for j := 0; j < opt.NumFeatures; j++ {
+		query[j] = rand.Float64()
+	}
+
+	so := NewDefaultSearchOptions()
+	so.SignFilter = SignFilter_POS
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := lsh.Search(query, so)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLSHDelete(b *testing.B) {
+	opt := NewDefaultOptions()
+	opt.NumFeatures = 60
+	lsh, err := New(opt)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	numDocuments := 10000
+	for n := 0; n < numDocuments; n++ {
+		feat := make([]float64, opt.NumFeatures)
+		for j := 0; j < opt.NumFeatures; j++ {
+			feat[j] = rand.Float64()
+		}
+
+		doc := SimpleDocument{uint64(n), feat, nil}
+		if err := lsh.Index(doc, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err := lsh.Delete(uint64(i))
+		if err != nil {
+			if err == ErrDocumentNotStored {
+				continue
+			}
+			b.Fatal(err)
+		}
+	}
 }

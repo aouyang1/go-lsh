@@ -34,8 +34,8 @@ func NewTables(opt *Options, ht []*Hyperplanes) ([]*Table, error) {
 
 type Table struct {
 	Hyperplanes *Hyperplanes
-	Table       map[uint64]*Bitmap
-	Doc2Hash    map[uint64]uint64
+	Table       map[uint8]*Bitmap
+	Doc2Hash    map[uint64]uint8
 }
 
 func NewTable(h *Hyperplanes) (*Table, error) {
@@ -47,8 +47,8 @@ func NewTable(h *Hyperplanes) (*Table, error) {
 		return nil, err
 	}
 
-	t.Table = make(map[uint64]*Bitmap)
-	t.Doc2Hash = make(map[uint64]uint64)
+	t.Table = make(map[uint8]*Bitmap)
+	t.Doc2Hash = make(map[uint64]uint8)
 	return t, nil
 }
 
@@ -59,7 +59,7 @@ func (t *Table) index(d Document) error {
 		return ErrDuplicateDocument
 	}
 
-	hash, err := t.Hyperplanes.Hash64(feat)
+	hash, err := t.Hyperplanes.Hash8(feat)
 	if err != nil {
 		return err
 	}
