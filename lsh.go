@@ -197,35 +197,73 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
 		}
 	}
 
-	floats.Scale(1.0/floats.Norm(f, 2), f)
-
+	docIds, nf, err := l.Filter(f, s)
+	if err != nil {
+		return nil, 0, err
+	}
 	res := NewResults(s.NumToReturn, s.Threshold, SignFilter_POS)
+	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
+		l.Score(nf, docIds, res)
+	}
 
+	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
+		floats.Scale(-1, nf)
+		l.Score(nf, docIds, res)
+	}
+	return res.Fetch(), res.NumScored, nil
+}
+
+// Filter returns a set of document ids that match the give feature vector and search options
+// along with the input feature vector noramlized
+func (l *LSH) Filter(f []float64, s *SearchOptions) ([]uint64, []float64, error) {
+	if len(f) != l.Opt.NumFeatures {
+		return nil, nil, ErrInvalidDocument
+	}
+
+	if s == nil {
+		s = NewDefaultSearchOptions()
+	} else {
+		if err := s.Validate(); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// create copy as to not modify input feature vector
+	feat := make([]float64, len(f))
+	copy(feat, f)
+	floats.Scale(1.0/floats.Norm(feat, 2), feat)
+
+	var docIds []uint64
 	// search for positively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		if err := l.search(f, res); err != nil {
-			return nil, 0, err
+		dids, err := l.filter(feat)
+		if err != nil {
+			return nil, nil, err
 		}
+		docIds = append(docIds, dids...)
 	}
 
 	// search for negatively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
-		floats.Scale(-1, f)
-		if err := l.search(f, res); err != nil {
-			return nil, 0, err
+		floats.Scale(-1, feat)
+		dids, err := l.filter(feat)
+		if err != nil {
+			return nil, nil, err
 		}
+		floats.Scale(-1, feat) // undo negation
+		docIds = append(docIds, dids...)
 	}
 
-	return res.Fetch(), res.NumScored, nil
+	return docIds, feat, nil
 }
 
-func (l *LSH) search(f []float64, res *Results) error {
+func (l *LSH) filter(f []float64) ([]uint64, error) {
 	rbRes := roaring64.New()
 
 	for _, t := range l.Tables {
 		hash, err := t.Hyperplanes.Hash16(f)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		rb := t.Table[hash]
 		if rb == nil {
@@ -237,18 +275,19 @@ func (l *LSH) search(f []float64, res *Results) error {
 		rb.mu.Unlock()
 	}
 
-	var numScored int
-	for _, uid := range rbRes.ToArray() {
+	return rbRes.ToArray(), nil
+}
+
+// Score takes a set of document ids and scores them against a provided search query
+func (l *LSH) Score(f []float64, docIds []uint64, res *Results) {
+	for _, uid := range docIds {
 		doc, exists := l.Docs[uid]
 		if !exists || doc == nil {
 			continue
 		}
 		score := stat.Correlation(f, doc.GetFeatures(), nil)
 		res.Update(Score{uid, score})
-		numScored++
 	}
-
-	return nil
 }
 
 // Save takes a filepath and a document interface representing the indexed documents

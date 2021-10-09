@@ -44,7 +44,7 @@ func TestNewLSH(t *testing.T) {
 	}
 }
 
-func TestLSH(t *testing.T) {
+func TestLSHSearch(t *testing.T) {
 	opt := NewDefaultOptions()
 	lsh, err := New(opt)
 	if err != nil {
