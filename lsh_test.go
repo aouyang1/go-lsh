@@ -286,6 +286,7 @@ func TestSearch(t *testing.T) {
 		{5, []float64{-7, 9, -5.5}, map[string]string{"service": "app1", "host": "host2"}},
 		{6, []float64{-7, 9, -7}, map[string]string{"service": "app2", "host": "host2"}},
 		{7, []float64{-7, 10, -7}, map[string]string{"service": "app2", "host": "host3"}},
+		{8, []float64{-5, -3, -2}, map[string]string{"service": "app3", "host": "host4"}},
 	}
 
 	for _, d := range docs {
@@ -353,6 +354,15 @@ func TestSearch(t *testing.T) {
 			Scores{
 				{UID: 6, Score: 1.00},
 				{UID: 7, Score: 0.99},
+			},
+		},
+		{
+			[]float64{-7, 9, -7},
+			SignFilter_ANY,
+			map[string][]string{"service": {"app1", "app2"}, "host": {"host2"}},
+			Scores{
+				{UID: 6, Score: 1.00},
+				{UID: 5, Score: 0.99},
 			},
 		},
 		{

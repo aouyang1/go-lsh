@@ -322,7 +322,8 @@ func (l *LSH) search(query map[string][]string, f []float64, res *Results) error
 			// first time populating or a full index search
 			rbRes.Or(rbTables)
 		} else {
-			// query specifies some specificity with label/value
+			// query specifies more than a single label so find the intersection of
+			// documents across all label queries
 			rbRes.And(rbTables)
 		}
 	}
