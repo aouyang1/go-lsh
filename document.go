@@ -14,9 +14,9 @@ type Document interface {
 }
 
 type SimpleDocument struct {
-	UID      uint64
-	Features []float64
-	Labels   map[string]string
+	UID      uint64            `json:"uid"`
+	Features []float64         `json:"features"`
+	Labels   map[string]string `json:"labels"`
 }
 
 func NewSimpleDocument(uid uint64, f []float64, labels map[string]string) *SimpleDocument {

@@ -32,10 +32,12 @@ func NewTables(opt *Options, ht []*Hyperplanes) ([]*Table, error) {
 	return tables, err
 }
 
+// Table maps buckets to a bitmap of document ids. Where documents are stored in the table is determined by
+// finding the bucket a document is mapped to.
 type Table struct {
 	Hyperplanes *Hyperplanes
-	Table       map[uint8]*Bitmap
-	Doc2Hash    map[uint64]uint8
+	Table       map[uint16]*Bitmap
+	Doc2Hash    map[uint64]uint16
 }
 
 func NewTable(h *Hyperplanes) (*Table, error) {
@@ -47,8 +49,8 @@ func NewTable(h *Hyperplanes) (*Table, error) {
 		return nil, err
 	}
 
-	t.Table = make(map[uint8]*Bitmap)
-	t.Doc2Hash = make(map[uint64]uint8)
+	t.Table = make(map[uint16]*Bitmap)
+	t.Doc2Hash = make(map[uint64]uint16)
 	return t, nil
 }
 
@@ -59,7 +61,7 @@ func (t *Table) index(d Document) error {
 		return ErrDuplicateDocument
 	}
 
-	hash, err := t.Hyperplanes.Hash8(feat)
+	hash, err := t.Hyperplanes.Hash16(feat)
 	if err != nil {
 		return err
 	}
@@ -99,6 +101,7 @@ func (t *Table) delete(uid uint64) error {
 	return nil
 }
 
+// Bitmap is a go-routine safe wrapping of the roarding bitmap
 type Bitmap struct {
 	mu sync.Mutex
 	Rb *roaring64.Bitmap

@@ -13,6 +13,8 @@ var (
 	ErrNumHyperplanesExceedHashBits = errors.New("number of hyperplanes exceeds available bits to encode features")
 )
 
+// Hyperplanes is composed of a number of randomly generated unit vectors where the vector length is based on the
+// configured number of features it is to represent.
 type Hyperplanes struct {
 	Planes [][]float64
 }

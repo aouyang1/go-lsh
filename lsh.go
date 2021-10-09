@@ -14,7 +14,7 @@ import (
 
 const (
 	// key value is expected to be at most 8 bits
-	MaxNumHyperplanes = 8
+	MaxNumHyperplanes = 16
 
 	// default label to use if none specified
 	DefaultLabel = "__DEFAULT__"
@@ -304,7 +304,7 @@ func (l *LSH) search(query map[string][]string, f []float64, res *Results) error
 			}
 
 			for _, t := range tables {
-				hash, err := t.Hyperplanes.Hash8(f)
+				hash, err := t.Hyperplanes.Hash16(f)
 				if err != nil {
 					return err
 				}
@@ -389,7 +389,7 @@ type Statistics struct {
 // FalseNegativeError represents the probability that a document will be missed during a search when it
 // should be found. This document should match with the query document, but due to the number of
 // hyperplanes, number of tables and the desired threshold will not with this probability. Closer to
-// zero means there's less chance for missing document results and closer to 1 means a higher liklihood
+// zero means there's less chance for missing document results and closer to 1 means a higher likelihood
 // of missing the documents in the search.
 type FalseNegativeError struct {
 	Threshold   float64 `json:"threshold"`
