@@ -15,12 +15,6 @@ import (
 const (
 	// key value is expected to be at most 8 bits
 	MaxNumHyperplanes = 16
-
-	// default label to use if none specified
-	DefaultLabel = "__DEFAULT__"
-
-	// default value to use if none specified
-	DefaultValue = "__DEFAULT__"
 )
 
 var (
@@ -81,8 +75,8 @@ func (o *Options) Validate() error {
 // the configured number of hyperplanes along with the documents currently indexed.
 type LSH struct {
 	Opt              *Options
-	HyperplaneTables []*Hyperplanes
-	Tables           map[string]map[string][]*Table // label to value to a set of tables
+	HyperplaneTables []*Hyperplanes // N sets of randomly generated hyperplanes
+	Tables           []*Table       // N tables each using a different randomly generated set of hyperplanes
 	Docs             map[uint64]Document
 }
 
@@ -94,8 +88,6 @@ func New(opt *Options) (*LSH, error) {
 	l := new(LSH)
 	l.Opt = opt
 
-	l.Tables = make(map[string]map[string][]*Table)
-
 	l.HyperplaneTables = make([]*Hyperplanes, 0, opt.NumTables)
 	for i := 0; i < opt.NumTables; i++ {
 		ht, err := NewHyperplanes(opt.NumHyperplanes, opt.NumFeatures)
@@ -104,15 +96,19 @@ func New(opt *Options) (*LSH, error) {
 		}
 		l.HyperplaneTables = append(l.HyperplaneTables, ht)
 	}
+	tables, err := NewTables(l.Opt, l.HyperplaneTables)
+	if err != nil {
+		return nil, err
+	}
+	l.Tables = tables
+
 	l.Docs = make(map[uint64]Document)
 	return l, nil
 }
 
 // Index stores the document in the LSH data structure. Returns an error if the document
-// is already present. If byLabels is nil the default label used is an empty string which would
-// be the default label/value keyspace documents are indexed. Setting byLabels permits
-// more scoped queries while searching e.g. find similar features with label = foo, value = bar.
-func (l *LSH) Index(d Document, byLabels []string) error {
+// is already present.
+func (l *LSH) Index(d Document) error {
 	uid := d.GetUID()
 	feat := d.GetFeatures()
 	if len(feat) != l.Opt.NumFeatures {
@@ -126,40 +122,15 @@ func (l *LSH) Index(d Document, byLabels []string) error {
 	}
 	floats.Scale(1.0/floats.Norm(feat, 2), feat)
 
-	if byLabels == nil {
-		byLabels = []string{DefaultLabel}
-	}
-	for _, label := range byLabels {
-		if err := l.index(d, label); err != nil {
-			return err
-		}
+	if err := l.index(d); err != nil {
+		return err
 	}
 	l.Docs[uid] = d
 	return nil
 }
 
-func (l *LSH) index(d Document, label string) error {
-	var err error
-
-	v, exists := d.GetLabel(label)
-	if !exists {
-		v = DefaultValue
-	}
-	values, exists := l.Tables[label]
-	if !exists {
-		values = make(map[string][]*Table)
-		l.Tables[label] = values
-	}
-
-	tables, exists := values[v]
-	if !exists {
-		tables, err = NewTables(l.Opt, l.HyperplaneTables)
-		if err != nil {
-			return err
-		}
-		values[v] = tables
-	}
-	for _, t := range tables {
+func (l *LSH) index(d Document) error {
+	for _, t := range l.Tables {
 		if err := t.index(d); err != nil {
 			return err
 		}
@@ -170,13 +141,9 @@ func (l *LSH) index(d Document, label string) error {
 // Delete attempts to remove the uid from the tables and also the document map
 func (l *LSH) Delete(uid uint64) error {
 	var err error
-	for _, values := range l.Tables {
-		for _, tables := range values {
-			for _, t := range tables {
-				if e := t.delete(uid); e != nil {
-					err = e
-				}
-			}
+	for _, t := range l.Tables {
+		if e := t.delete(uid); e != nil {
+			err = e
 		}
 	}
 	delete(l.Docs, uid)
@@ -185,10 +152,9 @@ func (l *LSH) Delete(uid uint64) error {
 
 // SearchOptions represent a set of parameters to be used to customize search results
 type SearchOptions struct {
-	Query       map[string][]string `json:"query"`
-	NumToReturn int                 `json:"num_to_return"`
-	Threshold   float64             `json:"threshold"`
-	SignFilter  SignFilter          `json:"sign_filter"`
+	NumToReturn int        `json:"num_to_return"`
+	Threshold   float64    `json:"threshold"`
+	SignFilter  SignFilter `json:"sign_filter"`
 }
 
 // Validate returns an error if any of the input options are invalid
@@ -207,8 +173,7 @@ func (s *SearchOptions) Validate() error {
 	return nil
 }
 
-// NewDefaultSearchOptions returns a default set of parameters to be used for search. If query
-// is not set then the search will be performed across all label value tables.
+// NewDefaultSearchOptions returns a default set of parameters to be used for search.
 func NewDefaultSearchOptions() *SearchOptions {
 	return &SearchOptions{
 		NumToReturn: 10,
@@ -238,7 +203,7 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
 
 	// search for positively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		if err := l.search(s.Query, f, res); err != nil {
+		if err := l.search(f, res); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -246,7 +211,7 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
 	// search for negatively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
 		floats.Scale(-1, f)
-		if err := l.search(s.Query, f, res); err != nil {
+		if err := l.search(f, res); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -254,78 +219,22 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
 	return res.Fetch(), res.NumScored, nil
 }
 
-func (l *LSH) search(query map[string][]string, f []float64, res *Results) error {
-	var fullSearch bool
-
-	if query == nil {
-		// search across all label value tables
-		fullSearch = true
-		query = make(map[string][]string)
-		for label, valTables := range l.Tables {
-			query[label] = make([]string, 0, len(valTables))
-			for value := range valTables {
-				query[label] = append(query[label], value)
-			}
-		}
-	}
-
-	// if label is specified but values is of length 0 then search across all values with
-	// that label
-	for label, values := range query {
-		if len(values) > 0 {
-			continue
-		}
-		valTables, exists := l.Tables[label]
-		if !exists {
-			continue
-		}
-
-		query[label] = make([]string, 0, len(valTables))
-		for val := range valTables {
-			query[label] = append(query[label], val)
-		}
-	}
-
+func (l *LSH) search(f []float64, res *Results) error {
 	rbRes := roaring64.New()
 
-	// search through each label and value tables
-	for label, values := range query {
-		valTables, exists := l.Tables[label]
-		if !exists {
+	for _, t := range l.Tables {
+		hash, err := t.Hyperplanes.Hash16(f)
+		if err != nil {
+			return err
+		}
+		rb := t.Table[hash]
+		if rb == nil {
+			// feature vector hash not present in hyperplane partition
 			continue
 		}
-
-		rbTables := roaring64.New()
-		// or through all values in label
-		for _, v := range values {
-			tables, exists := valTables[v]
-			if !exists {
-				continue
-			}
-
-			for _, t := range tables {
-				hash, err := t.Hyperplanes.Hash16(f)
-				if err != nil {
-					return err
-				}
-				rb := t.Table[hash]
-				if rb == nil {
-					// feature vector hash not present in hyperplane partition
-					continue
-				}
-				rb.mu.Lock()
-				rbTables.Or(rb.Rb)
-				rb.mu.Unlock()
-			}
-		}
-		if rbRes.IsEmpty() || fullSearch {
-			// first time populating or a full index search
-			rbRes.Or(rbTables)
-		} else {
-			// query specifies more than a single label so find the intersection of
-			// documents across all label queries
-			rbRes.And(rbTables)
-		}
+		rb.mu.Lock()
+		rbRes.Or(rb.Rb)
+		rb.mu.Unlock()
 	}
 
 	var numScored int

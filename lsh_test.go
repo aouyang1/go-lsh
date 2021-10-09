@@ -52,14 +52,14 @@ func TestLSH(t *testing.T) {
 	}
 
 	docs := []SimpleDocument{
-		{0, []float64{0, 0, 5}, nil},
-		{1, []float64{0, 0.1, 3}, nil},
-		{2, []float64{0, 0.1, 2}, nil},
-		{3, []float64{0, 0.1, 1}, nil},
-		{4, []float64{0, -0.1, -4}, nil},
+		{0, []float64{0, 0, 5}},
+		{1, []float64{0, 0.1, 3}},
+		{2, []float64{0, 0.1, 2}},
+		{3, []float64{0, 0.1, 1}},
+		{4, []float64{0, -0.1, -4}},
 	}
 	for _, d := range docs {
-		if err := lsh.Index(d, nil); err != nil {
+		if err := lsh.Index(d); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,7 +90,7 @@ func TestLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := lsh.Index(NewSimpleDocument(2, []float64{0, 0.1, 2}, nil), nil); err != nil {
+	if err := lsh.Index(NewSimpleDocument(2, []float64{0, 0.1, 2})); err != nil {
 		t.Fatal(err)
 	}
 	scores, _, err = lsh.Search([]float64{0, 0, 0.1}, so)
@@ -142,13 +142,13 @@ func TestSaveLoadLSH(t *testing.T) {
 	}
 
 	docs := []SimpleDocument{
-		{0, []float64{0, 0, 5}, nil},
-		{1, []float64{0, 0.1, 3}, nil},
-		{2, []float64{0, 0.1, 2}, nil},
-		{3, []float64{0, 0.1, 1}, nil},
+		{0, []float64{0, 0, 5}},
+		{1, []float64{0, 0.1, 3}},
+		{2, []float64{0, 0.1, 2}},
+		{3, []float64{0, 0.1, 1}},
 	}
 	for _, d := range docs {
-		if err := lsh.Index(d, nil); err != nil {
+		if err := lsh.Index(d); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -226,13 +226,13 @@ func TestIndexSimple(t *testing.T) {
 		doc         SimpleDocument
 		expectedErr error
 	}{
-		{SimpleDocument{0, []float64{0, 1}, nil}, ErrInvalidDocument},
-		{SimpleDocument{1, []float64{3, 3, 3}, nil}, ErrNoFeatureComplexity},
-		{SimpleDocument{2, []float64{3, 3, 0}, nil}, nil},
-		{SimpleDocument{2, []float64{1, 2, 3}, nil}, ErrDuplicateDocument},
+		{SimpleDocument{0, []float64{0, 1}}, ErrInvalidDocument},
+		{SimpleDocument{1, []float64{3, 3, 3}}, ErrNoFeatureComplexity},
+		{SimpleDocument{2, []float64{3, 3, 0}}, nil},
+		{SimpleDocument{2, []float64{1, 2, 3}}, ErrDuplicateDocument},
 	}
 	for _, td := range testData {
-		if err := lsh.Index(td.doc, nil); err != td.expectedErr {
+		if err := lsh.Index(td.doc); err != td.expectedErr {
 			t.Errorf("expected %v, but got %v for error", td.expectedErr, err)
 		}
 	}
@@ -246,14 +246,14 @@ func TestDelete(t *testing.T) {
 	}
 
 	docs := []SimpleDocument{
-		{0, []float64{0, 1, 3}, nil},
-		{1, []float64{1, 3, 3}, nil},
-		{2, []float64{3, 3, 0}, nil},
-		{3, []float64{1, 2, 3}, nil},
+		{0, []float64{0, 1, 3}},
+		{1, []float64{1, 3, 3}},
+		{2, []float64{3, 3, 0}},
+		{3, []float64{1, 2, 3}},
 	}
 
 	for _, d := range docs {
-		if err := lsh.Index(d, nil); err != nil {
+		if err := lsh.Index(d); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -275,27 +275,27 @@ func TestSearch(t *testing.T) {
 	}
 
 	docs := []SimpleDocument{
-		{0, []float64{0, 1, 3}, nil},
-		{1, []float64{1, 3, 3}, nil},
-		{2, []float64{3, 3, 0}, nil},
-		{3, []float64{1, 2, 3}, nil},
+		{0, []float64{0, 1, 3}},
+		{1, []float64{1, 3, 3}},
+		{2, []float64{3, 3, 0}},
+		{3, []float64{1, 2, 3}},
 	}
 
 	docGroups := []SimpleDocument{
-		{4, []float64{-7, 8, -9}, map[string]string{"service": "app1", "host": "host1"}},
-		{5, []float64{-7, 9, -5.5}, map[string]string{"service": "app1", "host": "host2"}},
-		{6, []float64{-7, 9, -7}, map[string]string{"service": "app2", "host": "host2"}},
-		{7, []float64{-7, 10, -7}, map[string]string{"service": "app2", "host": "host3"}},
-		{8, []float64{-5, -3, -2}, map[string]string{"service": "app3", "host": "host4"}},
+		{4, []float64{-7, 8, -9}},
+		{5, []float64{-7, 9, -5.5}},
+		{6, []float64{-7, 9, -7}},
+		{7, []float64{-7, 10, -7}},
+		{8, []float64{-5, -3, -2}},
 	}
 
 	for _, d := range docs {
-		if err := lsh.Index(d, nil); err != nil {
+		if err := lsh.Index(d); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, d := range docGroups {
-		if err := lsh.Index(d, []string{"service", "host"}); err != nil {
+		if err := lsh.Index(d); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -315,13 +315,11 @@ func TestSearch(t *testing.T) {
 	testData := []struct {
 		f        []float64
 		sf       SignFilter
-		q        map[string][]string
 		expected Scores
 	}{
 		{
 			[]float64{0, 1, 3},
 			SignFilter_POS,
-			nil,
 			Scores{
 				{UID: 0, Score: 1.00},
 				{UID: 3, Score: 0.98},
@@ -330,54 +328,6 @@ func TestSearch(t *testing.T) {
 		{
 			[]float64{-7, 9, -7},
 			SignFilter_POS,
-			nil,
-			Scores{
-				{UID: 6, Score: 1.00},
-				{UID: 7, Score: 0.99},
-				{UID: 5, Score: 0.99},
-				{UID: 4, Score: 0.99},
-			},
-		},
-		{
-			[]float64{-7, 9, -7},
-			SignFilter_POS,
-			map[string][]string{"service": {"app1"}},
-			Scores{
-				{UID: 5, Score: 0.99},
-				{UID: 4, Score: 0.99},
-			},
-		},
-		{
-			[]float64{-7, 9, -7},
-			SignFilter_POS,
-			map[string][]string{"service": {"app2"}},
-			Scores{
-				{UID: 6, Score: 1.00},
-				{UID: 7, Score: 0.99},
-			},
-		},
-		{
-			[]float64{-7, 9, -7},
-			SignFilter_ANY,
-			map[string][]string{"service": {"app1", "app2"}, "host": {"host2"}},
-			Scores{
-				{UID: 6, Score: 1.00},
-				{UID: 5, Score: 0.99},
-			},
-		},
-		{
-			[]float64{-7, 9, -7},
-			SignFilter_POS,
-			map[string][]string{"host": {"host2"}},
-			Scores{
-				{UID: 6, Score: 1.00},
-				{UID: 5, Score: 0.99},
-			},
-		},
-		{
-			[]float64{-7, 9, -7},
-			SignFilter_POS,
-			map[string][]string{"host": {}},
 			Scores{
 				{UID: 6, Score: 1.00},
 				{UID: 7, Score: 0.99},
@@ -389,7 +339,6 @@ func TestSearch(t *testing.T) {
 
 	for _, td := range testData {
 		so.SignFilter = td.sf
-		so.Query = td.q
 		res, _, err := lsh.Search(td.f, so)
 		if err != nil {
 			t.Fatal(err)
@@ -430,7 +379,7 @@ func TestLSHError(t *testing.T) {
 
 	start := time.Now()
 	for i, f := range features {
-		if err := lsh.Index(NewSimpleDocument(uint64(i), f, nil), nil); err != nil {
+		if err := lsh.Index(NewSimpleDocument(uint64(i), f)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -474,14 +423,14 @@ func TestLSHStats(t *testing.T) {
 	}
 
 	docs := []SimpleDocument{
-		{0, []float64{0, 0, 5}, nil},
-		{1, []float64{0, 0.1, 3}, nil},
-		{2, []float64{0, 0.1, 2}, nil},
-		{3, []float64{0, 0.1, 1}, nil},
-		{4, []float64{0, -0.1, -4}, nil},
+		{0, []float64{0, 0, 5}},
+		{1, []float64{0, 0.1, 3}},
+		{2, []float64{0, 0.1, 2}},
+		{3, []float64{0, 0.1, 1}},
+		{4, []float64{0, -0.1, -4}},
 	}
 	for _, d := range docs {
-		if err := lsh.Index(d, nil); err != nil {
+		if err := lsh.Index(d); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -556,8 +505,8 @@ func BenchmarkLSHIndex(b *testing.B) {
 			feat[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(i), feat, nil}
-		if err := lsh.Index(doc, nil); err != nil {
+		doc := SimpleDocument{uint64(i), feat}
+		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -579,8 +528,8 @@ func BenchmarkLSHSearch(b *testing.B) {
 			feat[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), feat, nil}
-		if err := lsh.Index(doc, nil); err != nil {
+		doc := SimpleDocument{uint64(n), feat}
+		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -614,8 +563,8 @@ func BenchmarkLSHSearchPos(b *testing.B) {
 			feat[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), feat, nil}
-		if err := lsh.Index(doc, nil); err != nil {
+		doc := SimpleDocument{uint64(n), feat}
+		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -652,8 +601,8 @@ func BenchmarkLSHDelete(b *testing.B) {
 			feat[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), feat, nil}
-		if err := lsh.Index(doc, nil); err != nil {
+		doc := SimpleDocument{uint64(n), feat}
+		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
