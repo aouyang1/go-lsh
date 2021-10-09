@@ -21,7 +21,7 @@ const (
 	SignFilter_ANY = 0
 )
 
-// NewResults creates a new instance of results to track these similar features
+// NewResults creates a new instance of results to track similar vectors
 func NewResults(topN int, threshold float64, signFilter SignFilter) *Results {
 	scores := make(Scores, 0, topN)
 

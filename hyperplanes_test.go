@@ -15,14 +15,14 @@ func TestNewHyperplanes(t *testing.T) {
 		return
 	}
 
-	if _, err := NewHyperplanes(5, 0); err != ErrInvalidNumFeatures {
+	if _, err := NewHyperplanes(5, 0); err != ErrInvalidVectorLength {
 		t.Error(err)
 		return
 	}
 
 	nh := 4
-	nf := 7
-	h, err := NewHyperplanes(nh, nf)
+	vl := 7
+	h, err := NewHyperplanes(nh, vl)
 	if err != nil {
 		t.Error(err)
 		return
@@ -32,8 +32,8 @@ func TestNewHyperplanes(t *testing.T) {
 		return
 	}
 	for _, p := range h.Planes {
-		if len(p) != nf {
-			t.Errorf("expected %d features, but got %d", nf, len(p))
+		if len(p) != vl {
+			t.Errorf("expected %d vector length, but got %d", vl, len(p))
 			continue
 		}
 		vecLen := math.Sqrt(floats.Dot(p, p))
@@ -52,10 +52,10 @@ func TestHyperplaneHash64(t *testing.T) {
 			{1, 0, 0},
 		},
 	}
-	if _, err := h.Hash64([]float64{}); err != ErrNoFeatures {
+	if _, err := h.Hash64([]float64{}); err != ErrNoVector {
 		t.Fatal(err)
 	}
-	if _, err := h.Hash64([]float64{1, 2}); !strings.Contains(err.Error(), ErrFeatureLengthMismatch.Error()) {
+	if _, err := h.Hash64([]float64{1, 2}); !strings.Contains(err.Error(), ErrVectorLengthMismatch.Error()) {
 		t.Fatal(err)
 	}
 
@@ -91,10 +91,10 @@ func TestHyperplaneHash32(t *testing.T) {
 			{1, 0, 0},
 		},
 	}
-	if _, err := h.Hash32([]float64{}); err != ErrNoFeatures {
+	if _, err := h.Hash32([]float64{}); err != ErrNoVector {
 		t.Fatal(err)
 	}
-	if _, err := h.Hash32([]float64{1, 2}); !strings.Contains(err.Error(), ErrFeatureLengthMismatch.Error()) {
+	if _, err := h.Hash32([]float64{1, 2}); !strings.Contains(err.Error(), ErrVectorLengthMismatch.Error()) {
 		t.Fatal(err)
 	}
 
@@ -130,10 +130,10 @@ func TestHyperplaneHash16(t *testing.T) {
 			{1, 0, 0},
 		},
 	}
-	if _, err := h.Hash16([]float64{}); err != ErrNoFeatures {
+	if _, err := h.Hash16([]float64{}); err != ErrNoVector {
 		t.Fatal(err)
 	}
-	if _, err := h.Hash16([]float64{1, 2}); !strings.Contains(err.Error(), ErrFeatureLengthMismatch.Error()) {
+	if _, err := h.Hash16([]float64{1, 2}); !strings.Contains(err.Error(), ErrVectorLengthMismatch.Error()) {
 		t.Fatal(err)
 	}
 
@@ -169,10 +169,10 @@ func TestHyperplaneHash8(t *testing.T) {
 			{1, 0, 0},
 		},
 	}
-	if _, err := h.Hash8([]float64{}); err != ErrNoFeatures {
+	if _, err := h.Hash8([]float64{}); err != ErrNoVector {
 		t.Fatal(err)
 	}
-	if _, err := h.Hash8([]float64{1, 2}); !strings.Contains(err.Error(), ErrFeatureLengthMismatch.Error()) {
+	if _, err := h.Hash8([]float64{1, 2}); !strings.Contains(err.Error(), ErrVectorLengthMismatch.Error()) {
 		t.Fatal(err)
 	}
 
@@ -202,10 +202,10 @@ func TestHyperplaneHash8(t *testing.T) {
 
 func BenchmarkHyperplaneNew(b *testing.B) {
 	numHyperplanes := 8
-	numFeatures := 60
+	vecLen := 60
 
 	for i := 0; i < b.N; i++ {
-		_, err := NewHyperplanes(numHyperplanes, numFeatures)
+		_, err := NewHyperplanes(numHyperplanes, vecLen)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -214,16 +214,16 @@ func BenchmarkHyperplaneNew(b *testing.B) {
 
 func BenchmarkHyperplaneHash64(b *testing.B) {
 	numHyperplanes := 8
-	numFeatures := 60
+	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, numFeatures)
+	h, err := NewHyperplanes(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	features := make([]float64, numFeatures)
+	v := make([]float64, vecLen)
 	for i := 0; i < b.N; i++ {
-		_, err := h.Hash64(features)
+		_, err := h.Hash64(v)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -232,16 +232,16 @@ func BenchmarkHyperplaneHash64(b *testing.B) {
 
 func BenchmarkHyperplaneHash32(b *testing.B) {
 	numHyperplanes := 8
-	numFeatures := 60
+	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, numFeatures)
+	h, err := NewHyperplanes(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	features := make([]float64, numFeatures)
+	v := make([]float64, vecLen)
 	for i := 0; i < b.N; i++ {
-		_, err := h.Hash32(features)
+		_, err := h.Hash32(v)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -250,16 +250,16 @@ func BenchmarkHyperplaneHash32(b *testing.B) {
 
 func BenchmarkHyperplaneHash16(b *testing.B) {
 	numHyperplanes := 8
-	numFeatures := 60
+	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, numFeatures)
+	h, err := NewHyperplanes(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	features := make([]float64, numFeatures)
+	v := make([]float64, vecLen)
 	for i := 0; i < b.N; i++ {
-		_, err := h.Hash16(features)
+		_, err := h.Hash16(v)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -268,16 +268,16 @@ func BenchmarkHyperplaneHash16(b *testing.B) {
 
 func BenchmarkHyperplaneHash8(b *testing.B) {
 	numHyperplanes := 8
-	numFeatures := 60
+	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, numFeatures)
+	h, err := NewHyperplanes(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	features := make([]float64, numFeatures)
+	v := make([]float64, vecLen)
 	for i := 0; i < b.N; i++ {
-		_, err := h.Hash8(features)
+		_, err := h.Hash8(v)
 		if err != nil {
 			b.Fatal(err)
 		}

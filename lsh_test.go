@@ -24,7 +24,7 @@ func TestNewOptions(t *testing.T) {
 		{3, 5, 2, nil},
 		{0, 0, 0, ErrInvalidNumHyperplanes},
 		{3, 65, 2, ErrExceededMaxNumHyperplanes},
-		{0, 5, 2, ErrInvalidNumFeatures},
+		{0, 5, 2, ErrInvalidVectorLength},
 		{3, 5, 0, ErrInvalidNumTables},
 	}
 	for _, td := range testData {
@@ -227,7 +227,7 @@ func TestIndexSimple(t *testing.T) {
 		expectedErr error
 	}{
 		{SimpleDocument{0, []float64{0, 1}}, ErrInvalidDocument},
-		{SimpleDocument{1, []float64{3, 3, 3}}, ErrNoFeatureComplexity},
+		{SimpleDocument{1, []float64{3, 3, 3}}, ErrNoVectorComplexity},
 		{SimpleDocument{2, []float64{3, 3, 0}}, nil},
 		{SimpleDocument{2, []float64{1, 2, 3}}, ErrDuplicateDocument},
 	}
@@ -354,31 +354,31 @@ func TestLSHError(t *testing.T) {
 	numHyperplanes := 8
 	numTables := 3
 	numIter := 100
-	numFeatures := 10
+	vecLen := 10
 	numDocs := 100000
 	threshold := 0.85
 
 	opt := NewDefaultOptions()
 	opt.NumHyperplanes = numHyperplanes
 	opt.NumTables = numTables
-	opt.NumFeatures = numFeatures
+	opt.VectorLength = vecLen
 
 	lsh, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	features := make([][]float64, numDocs)
+	vectors := make([][]float64, numDocs)
 	for i := 0; i < numDocs; i++ {
-		features[i] = make([]float64, numFeatures)
-		for j := 0; j < numFeatures; j++ {
-			features[i][j] = rand.Float64() - 0.5
+		vectors[i] = make([]float64, vecLen)
+		for j := 0; j < vecLen; j++ {
+			vectors[i][j] = rand.Float64() - 0.5
 		}
-		floats.Scale(1/floats.Norm(features[i], 2), features[i])
+		floats.Scale(1/floats.Norm(vectors[i], 2), vectors[i])
 	}
 
 	start := time.Now()
-	for i, f := range features {
+	for i, f := range vectors {
 		if err := lsh.Index(NewSimpleDocument(uint64(i), f)); err != nil {
 			t.Fatal(err)
 		}
@@ -390,12 +390,12 @@ func TestLSHError(t *testing.T) {
 	so.SignFilter = SignFilter_POS
 	so.Threshold = threshold
 
-	f := make([]float64, numFeatures)
+	f := make([]float64, vecLen)
 	scored := make([]float64, 0, numIter)
 	counts := make([]float64, 0, numIter)
 	scores := make([]float64, 0, numIter)
 	for i := 0; i < numIter; i++ {
-		for j := 0; j < numFeatures; j++ {
+		for j := 0; j < vecLen; j++ {
 			f[j] = rand.Float64() - 0.5
 		}
 		floats.Scale(1/floats.Norm(f, 2), f)
@@ -493,19 +493,19 @@ func compareScores(res, expected Scores) error {
 
 func BenchmarkLSHIndex(b *testing.B) {
 	opt := NewDefaultOptions()
-	opt.NumFeatures = 60
+	opt.VectorLength = 60
 	lsh, err := New(opt)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	for i := 0; i < b.N; i++ {
-		feat := make([]float64, opt.NumFeatures)
-		for j := 0; j < opt.NumFeatures; j++ {
-			feat[j] = rand.Float64()
+		vec := make([]float64, opt.VectorLength)
+		for j := 0; j < opt.VectorLength; j++ {
+			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(i), feat}
+		doc := SimpleDocument{uint64(i), vec}
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -514,7 +514,7 @@ func BenchmarkLSHIndex(b *testing.B) {
 
 func BenchmarkLSHSearch(b *testing.B) {
 	opt := NewDefaultOptions()
-	opt.NumFeatures = 60
+	opt.VectorLength = 60
 	opt.NumHyperplanes = 1
 	lsh, err := New(opt)
 	if err != nil {
@@ -523,19 +523,19 @@ func BenchmarkLSHSearch(b *testing.B) {
 
 	numDocuments := 10000
 	for n := 0; n < numDocuments; n++ {
-		feat := make([]float64, opt.NumFeatures)
-		for j := 0; j < opt.NumFeatures; j++ {
-			feat[j] = rand.Float64()
+		vec := make([]float64, opt.VectorLength)
+		for j := 0; j < opt.VectorLength; j++ {
+			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), feat}
+		doc := SimpleDocument{uint64(n), vec}
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
 
-	query := make([]float64, opt.NumFeatures)
-	for j := 0; j < opt.NumFeatures; j++ {
+	query := make([]float64, opt.VectorLength)
+	for j := 0; j < opt.VectorLength; j++ {
 		query[j] = rand.Float64()
 	}
 
@@ -550,7 +550,7 @@ func BenchmarkLSHSearch(b *testing.B) {
 
 func BenchmarkLSHSearchPos(b *testing.B) {
 	opt := NewDefaultOptions()
-	opt.NumFeatures = 60
+	opt.VectorLength = 60
 	lsh, err := New(opt)
 	if err != nil {
 		b.Fatal(err)
@@ -558,19 +558,19 @@ func BenchmarkLSHSearchPos(b *testing.B) {
 
 	numDocuments := 10000
 	for n := 0; n < numDocuments; n++ {
-		feat := make([]float64, opt.NumFeatures)
-		for j := 0; j < opt.NumFeatures; j++ {
-			feat[j] = rand.Float64()
+		vec := make([]float64, opt.VectorLength)
+		for j := 0; j < opt.VectorLength; j++ {
+			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), feat}
+		doc := SimpleDocument{uint64(n), vec}
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
 
-	query := make([]float64, opt.NumFeatures)
-	for j := 0; j < opt.NumFeatures; j++ {
+	query := make([]float64, opt.VectorLength)
+	for j := 0; j < opt.VectorLength; j++ {
 		query[j] = rand.Float64()
 	}
 
@@ -588,7 +588,7 @@ func BenchmarkLSHSearchPos(b *testing.B) {
 
 func BenchmarkLSHDelete(b *testing.B) {
 	opt := NewDefaultOptions()
-	opt.NumFeatures = 60
+	opt.VectorLength = 60
 	lsh, err := New(opt)
 	if err != nil {
 		b.Fatal(err)
@@ -596,12 +596,12 @@ func BenchmarkLSHDelete(b *testing.B) {
 
 	numDocuments := 10000
 	for n := 0; n < numDocuments; n++ {
-		feat := make([]float64, opt.NumFeatures)
-		for j := 0; j < opt.NumFeatures; j++ {
-			feat[j] = rand.Float64()
+		vec := make([]float64, opt.VectorLength)
+		for j := 0; j < opt.VectorLength; j++ {
+			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), feat}
+		doc := SimpleDocument{uint64(n), vec}
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}

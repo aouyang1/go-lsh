@@ -13,21 +13,21 @@ import (
 )
 
 const (
-	// key value is expected to be at most 8 bits
-	MaxNumHyperplanes = 16
+	// key value is expected to be at most 16 bits
+	maxNumHyperplanes = 16
 )
 
 var (
-	ErrExceededMaxNumHyperplanes = fmt.Errorf("number of hyperplanes exceeded max of, %d", MaxNumHyperplanes)
+	ErrExceededMaxNumHyperplanes = fmt.Errorf("number of hyperplanes exceeded max of, %d", maxNumHyperplanes)
 	ErrInvalidNumHyperplanes     = errors.New("invalid number of hyperplanes, must be at least 1")
 	ErrInvalidNumTables          = errors.New("invalid number of tables, must be at least 1")
-	ErrInvalidNumFeatures        = errors.New("invalid number of features, must be at least 1")
-	ErrInvalidDocument           = errors.New("number of features does not match with the configured options")
+	ErrInvalidVectorLength       = errors.New("invalid vector length, must be at least 1")
+	ErrInvalidDocument           = errors.New("vector length does not match with the configured options")
 	ErrDuplicateDocument         = errors.New("document is already indexed")
 	ErrNoOptions                 = errors.New("no options set for LSH")
-	ErrNoFeatureComplexity       = errors.New("features do not have enough complexity with a standard deviation of 0")
-	ErrFeatureLengthMismatch     = errors.New("feature slice length mismatch")
-	ErrNoFeatures                = errors.New("no features provided")
+	ErrNoVectorComplexity        = errors.New("vector does not have enough complexity with a standard deviation of 0")
+	ErrVectorLengthMismatch      = errors.New("vector length mismatch")
+	ErrNoVector                  = errors.New("no vector provided")
 	ErrDocumentNotStored         = errors.New("document id is not stored")
 	ErrHashNotFound              = errors.New("hash not found in table")
 	ErrInvalidNumToReturn        = errors.New("invalid NumToReturn, must be at least 1")
@@ -39,7 +39,7 @@ var (
 type Options struct {
 	NumHyperplanes int
 	NumTables      int
-	NumFeatures    int
+	VectorLength   int
 }
 
 // NewDefaultOptions returns a set of default options to create the LSH tables
@@ -47,7 +47,7 @@ func NewDefaultOptions() *Options {
 	return &Options{
 		NumHyperplanes: 8,   // more hyperplanes increases false negatives decrease number of direct comparisons
 		NumTables:      128, // more tables means we'll decrease false negatives at the cost of more direct comparisons
-		NumFeatures:    3,
+		VectorLength:   3,
 	}
 }
 
@@ -56,7 +56,7 @@ func (o *Options) Validate() error {
 	if o.NumHyperplanes < 1 {
 		return ErrInvalidNumHyperplanes
 	}
-	if o.NumHyperplanes > MaxNumHyperplanes {
+	if o.NumHyperplanes > maxNumHyperplanes {
 		return ErrExceededMaxNumHyperplanes
 	}
 
@@ -64,8 +64,8 @@ func (o *Options) Validate() error {
 		return ErrInvalidNumTables
 	}
 
-	if o.NumFeatures < 1 {
-		return ErrInvalidNumFeatures
+	if o.VectorLength < 1 {
+		return ErrInvalidVectorLength
 	}
 
 	return nil
@@ -90,7 +90,7 @@ func New(opt *Options) (*LSH, error) {
 
 	l.HyperplaneTables = make([]*Hyperplanes, 0, opt.NumTables)
 	for i := 0; i < opt.NumTables; i++ {
-		ht, err := NewHyperplanes(opt.NumHyperplanes, opt.NumFeatures)
+		ht, err := NewHyperplanes(opt.NumHyperplanes, opt.VectorLength)
 		if err != nil {
 			return nil, err
 		}
@@ -110,17 +110,17 @@ func New(opt *Options) (*LSH, error) {
 // is already present.
 func (l *LSH) Index(d Document) error {
 	uid := d.GetUID()
-	feat := d.GetFeatures()
-	if len(feat) != l.Opt.NumFeatures {
+	vec := d.GetVector()
+	if len(vec) != l.Opt.VectorLength {
 		return ErrInvalidDocument
 	}
-	if stat.StdDev(feat, nil) == 0 {
-		return ErrNoFeatureComplexity
+	if stat.StdDev(vec, nil) == 0 {
+		return ErrNoVectorComplexity
 	}
 	if _, exists := l.Docs[uid]; exists {
 		return ErrDuplicateDocument
 	}
-	floats.Scale(1.0/floats.Norm(feat, 2), feat)
+	floats.Scale(1.0/floats.Norm(vec, 2), vec)
 
 	if err := l.index(d); err != nil {
 		return err
@@ -183,9 +183,9 @@ func NewDefaultSearchOptions() *SearchOptions {
 }
 
 // Search looks through and merges results from all tables to find the nearest neighbors to the
-// provided feature vector
-func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
-	if len(f) != l.Opt.NumFeatures {
+// provided vector
+func (l *LSH) Search(v []float64, s *SearchOptions) (Scores, int, error) {
+	if len(v) != l.Opt.VectorLength {
 		return nil, 0, ErrInvalidDocument
 	}
 
@@ -197,26 +197,26 @@ func (l *LSH) Search(f []float64, s *SearchOptions) (Scores, int, error) {
 		}
 	}
 
-	docIds, nf, err := l.Filter(f, s)
+	docIds, nv, err := l.Filter(v, s)
 	if err != nil {
 		return nil, 0, err
 	}
 	res := NewResults(s.NumToReturn, s.Threshold, SignFilter_POS)
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		l.Score(nf, docIds, res)
+		l.Score(nv, docIds, res)
 	}
 
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
-		floats.Scale(-1, nf)
-		l.Score(nf, docIds, res)
+		floats.Scale(-1, nv)
+		l.Score(nv, docIds, res)
 	}
 	return res.Fetch(), res.NumScored, nil
 }
 
-// Filter returns a set of document ids that match the give feature vector and search options
-// along with the input feature vector noramlized
-func (l *LSH) Filter(f []float64, s *SearchOptions) ([]uint64, []float64, error) {
-	if len(f) != l.Opt.NumFeatures {
+// Filter returns a set of document ids that match the given vector and search options
+// along with the input vector noramlized
+func (l *LSH) Filter(v []float64, s *SearchOptions) ([]uint64, []float64, error) {
+	if len(v) != l.Opt.VectorLength {
 		return nil, nil, ErrInvalidDocument
 	}
 
@@ -228,15 +228,15 @@ func (l *LSH) Filter(f []float64, s *SearchOptions) ([]uint64, []float64, error)
 		}
 	}
 
-	// create copy as to not modify input feature vector
-	feat := make([]float64, len(f))
-	copy(feat, f)
-	floats.Scale(1.0/floats.Norm(feat, 2), feat)
+	// create copy as to not modify input vector
+	vec := make([]float64, len(v))
+	copy(vec, v)
+	floats.Scale(1.0/floats.Norm(vec, 2), vec)
 
 	var docIds []uint64
 	// search for positively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		dids, err := l.filter(feat)
+		dids, err := l.filter(vec)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -245,29 +245,29 @@ func (l *LSH) Filter(f []float64, s *SearchOptions) ([]uint64, []float64, error)
 
 	// search for negatively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
-		floats.Scale(-1, feat)
-		dids, err := l.filter(feat)
+		floats.Scale(-1, vec)
+		dids, err := l.filter(vec)
 		if err != nil {
 			return nil, nil, err
 		}
-		floats.Scale(-1, feat) // undo negation
+		floats.Scale(-1, vec) // undo negation
 		docIds = append(docIds, dids...)
 	}
 
-	return docIds, feat, nil
+	return docIds, vec, nil
 }
 
-func (l *LSH) filter(f []float64) ([]uint64, error) {
+func (l *LSH) filter(v []float64) ([]uint64, error) {
 	rbRes := roaring64.New()
 
 	for _, t := range l.Tables {
-		hash, err := t.Hyperplanes.Hash16(f)
+		hash, err := t.Hyperplanes.Hash16(v)
 		if err != nil {
 			return nil, err
 		}
 		rb := t.Table[hash]
 		if rb == nil {
-			// feature vector hash not present in hyperplane partition
+			// vector hash not present in hyperplane partition
 			continue
 		}
 		rb.mu.Lock()
@@ -279,13 +279,13 @@ func (l *LSH) filter(f []float64) ([]uint64, error) {
 }
 
 // Score takes a set of document ids and scores them against a provided search query
-func (l *LSH) Score(f []float64, docIds []uint64, res *Results) {
+func (l *LSH) Score(v []float64, docIds []uint64, res *Results) {
 	for _, uid := range docIds {
 		doc, exists := l.Docs[uid]
 		if !exists || doc == nil {
 			continue
 		}
-		score := stat.Correlation(f, doc.GetFeatures(), nil)
+		score := stat.Correlation(v, doc.GetVector(), nil)
 		res.Update(Score{uid, score})
 	}
 }

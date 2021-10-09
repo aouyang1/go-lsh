@@ -53,12 +53,12 @@ func NewTable(h *Hyperplanes) (*Table, error) {
 
 func (t *Table) index(d Document) error {
 	uid := d.GetUID()
-	feat := d.GetFeatures()
+	v := d.GetVector()
 	if _, exists := t.Doc2Hash[uid]; exists {
 		return ErrDuplicateDocument
 	}
 
-	hash, err := t.Hyperplanes.Hash16(feat)
+	hash, err := t.Hyperplanes.Hash16(v)
 	if err != nil {
 		return err
 	}
