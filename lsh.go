@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sync"
 
 	"github.com/RoaringBitmap/roaring/roaring64"
 	"gonum.org/v1/gonum/floats"
@@ -259,21 +260,27 @@ func (l *LSH) Filter(v []float64, s *SearchOptions) ([]uint64, []float64, error)
 
 func (l *LSH) filter(v []float64) ([]uint64, error) {
 	rbRes := roaring64.New()
+	var resLock sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(len(l.Tables))
 
 	for _, t := range l.Tables {
-		hash, err := t.Hyperplanes.Hash16(v)
-		if err != nil {
-			return nil, err
-		}
-		rb := t.Table[hash]
-		if rb == nil {
-			// vector hash not present in hyperplane partition
-			continue
-		}
-		rb.mu.Lock()
-		rbRes.Or(rb.Rb)
-		rb.mu.Unlock()
+		go func(tbl *Table) {
+			defer wg.Done()
+			hash, _ := tbl.Hyperplanes.Hash16(v)
+			rb := tbl.Table[hash]
+			if rb == nil {
+				// vector hash not present in hyperplane partition
+				return
+			}
+			rb.mu.Lock()
+			resLock.Lock()
+			rbRes.Or(rb.Rb)
+			resLock.Unlock()
+			rb.mu.Unlock()
+		}(t)
 	}
+	wg.Wait()
 
 	return rbRes.ToArray(), nil
 }
