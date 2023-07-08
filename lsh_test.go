@@ -512,7 +512,7 @@ func BenchmarkLSHIndex(b *testing.B) {
 	}
 }
 
-func BenchmarkLSHSearch(b *testing.B) {
+func BenchmarkLSHSearchSingleHyperplane(b *testing.B) {
 	opt := NewDefaultOptions()
 	opt.VectorLength = 60
 	opt.NumHyperplanes = 1
@@ -548,7 +548,7 @@ func BenchmarkLSHSearch(b *testing.B) {
 	}
 }
 
-func BenchmarkLSHSearchPos(b *testing.B) {
+func BenchmarkLSHSearchPositive(b *testing.B) {
 	opt := NewDefaultOptions()
 	opt.VectorLength = 60
 	lsh, err := New(opt)
@@ -586,6 +586,152 @@ func BenchmarkLSHSearchPos(b *testing.B) {
 	}
 }
 
+func BenchmarkLSHSearchRealistic(b *testing.B) {
+	opt := NewDefaultOptions()
+	opt.VectorLength = 60
+	lsh, err := New(opt)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	waveforms := make(map[string][]float64)
+	spike := make([]float64, opt.VectorLength)
+	spike[opt.VectorLength/2] = 1.0
+	waveforms["spike"] = spike
+
+	risingstep := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+		risingstep[i] = 1.0
+	}
+	waveforms["risingstep"] = risingstep
+
+	loweringstep := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+		loweringstep[i] = -1.0
+	}
+	waveforms["loweringstep"] = loweringstep
+
+	triangle := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
+		triangle[i] = 1 * float64(i-opt.VectorLength/4)
+	}
+	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
+		triangle[i] = -1*float64(i-opt.VectorLength/2) + 1
+	}
+	waveforms["triangle"] = triangle
+
+	dip := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
+		dip[i] = -1 * float64(i-opt.VectorLength/4)
+	}
+	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
+		dip[i] = 1*float64(i-opt.VectorLength/2) - 1
+	}
+	waveforms["dip"] = dip
+
+	waveNames := []string{"spike", "risingstep", "loweringstep", "triangle", "dip"}
+
+	numDocuments := 100000
+	for n := 0; n < numDocuments; n++ {
+		vec := make([]float64, opt.VectorLength)
+		copy(vec, waveforms[waveNames[n%len(waveNames)]])
+		for j := 0; j < opt.VectorLength; j++ {
+			vec[j] += rand.Float64()
+		}
+
+		doc := SimpleDocument{uint64(n), vec}
+		if err := lsh.Index(doc); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	query := waveforms["risingstep"]
+
+	so := NewDefaultSearchOptions()
+	so.SignFilter = SignFilter_POS
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := lsh.Search(query, so)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkLSHSearchRealisticSingleHyperplane(b *testing.B) {
+	opt := NewDefaultOptions()
+	opt.VectorLength = 60
+	opt.NumHyperplanes = 1
+	lsh, err := New(opt)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	waveforms := make(map[string][]float64)
+	spike := make([]float64, opt.VectorLength)
+	spike[opt.VectorLength/2] = 1.0
+	waveforms["spike"] = spike
+
+	risingstep := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+		risingstep[i] = 1.0
+	}
+	waveforms["risingstep"] = risingstep
+
+	loweringstep := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+		loweringstep[i] = -1.0
+	}
+	waveforms["loweringstep"] = loweringstep
+
+	triangle := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
+		triangle[i] = 1 * float64(i-opt.VectorLength/4)
+	}
+	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
+		triangle[i] = -1*float64(i-opt.VectorLength/2) + 1
+	}
+	waveforms["triangle"] = triangle
+
+	dip := make([]float64, opt.VectorLength)
+	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
+		dip[i] = -1 * float64(i-opt.VectorLength/4)
+	}
+	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
+		dip[i] = 1*float64(i-opt.VectorLength/2) - 1
+	}
+	waveforms["dip"] = dip
+
+	waveNames := []string{"spike", "risingstep", "loweringstep", "triangle", "dip"}
+
+	numDocuments := 100000
+	for n := 0; n < numDocuments; n++ {
+		vec := make([]float64, opt.VectorLength)
+		copy(vec, waveforms[waveNames[n%len(waveNames)]])
+		for j := 0; j < opt.VectorLength; j++ {
+			vec[j] += rand.Float64()
+		}
+
+		doc := SimpleDocument{uint64(n), vec}
+		if err := lsh.Index(doc); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	query := waveforms["risingstep"]
+
+	so := NewDefaultSearchOptions()
+	so.SignFilter = SignFilter_POS
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, err := lsh.Search(query, so)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
 func BenchmarkLSHDelete(b *testing.B) {
 	opt := NewDefaultOptions()
 	opt.VectorLength = 60
