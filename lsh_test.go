@@ -28,7 +28,7 @@ func TestNewOptions(t *testing.T) {
 		{3, 5, 0, ErrInvalidNumTables},
 	}
 	for _, td := range testData {
-		opt := &Options{td.nh, td.nt, td.nf}
+		opt := &Options{td.nh, td.nt, td.nf, NewDefaultTransformFunc}
 		if err := opt.Validate(); err != td.err {
 			t.Errorf("expected %v, but got %v", td.err, err)
 			continue
@@ -51,12 +51,12 @@ func TestLSHSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	docs := []SimpleDocument{
-		{0, []float64{0, 0, 5}},
-		{1, []float64{0, 0.1, 3}},
-		{2, []float64{0, 0.1, 2}},
-		{3, []float64{0, 0.1, 1}},
-		{4, []float64{0, -0.1, -4}},
+	docs := []Document{
+		NewSimpleDocument(0, []float64{0, 0, 5}),
+		NewSimpleDocument(1, []float64{0, 0.1, 3}),
+		NewSimpleDocument(2, []float64{0, 0.1, 2}),
+		NewSimpleDocument(3, []float64{0, 0.1, 1}),
+		NewSimpleDocument(4, []float64{0, -0.1, -4}),
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -141,11 +141,11 @@ func TestSaveLoadLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	docs := []SimpleDocument{
-		{0, []float64{0, 0, 5}},
-		{1, []float64{0, 0.1, 3}},
-		{2, []float64{0, 0.1, 2}},
-		{3, []float64{0, 0.1, 1}},
+	docs := []Document{
+		NewSimpleDocument(0, []float64{0, 0, 5}),
+		NewSimpleDocument(1, []float64{0, 0.1, 3}),
+		NewSimpleDocument(2, []float64{0, 0.1, 2}),
+		NewSimpleDocument(3, []float64{0, 0.1, 1}),
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -177,7 +177,7 @@ func TestSaveLoadLSH(t *testing.T) {
 	if err := newLsh.Load(lshFile); err != nil {
 		t.Fatal(err)
 	}
-
+	newLsh.Opt.tFunc = NewDefaultTransformFunc
 	scores, _, err = newLsh.Search([]float64{0, 0, 0.1}, so)
 	if err != nil {
 		t.Fatal(err)
@@ -223,13 +223,13 @@ func TestIndexSimple(t *testing.T) {
 	}
 
 	testData := []struct {
-		doc         SimpleDocument
+		doc         Document
 		expectedErr error
 	}{
-		{SimpleDocument{0, []float64{0, 1}}, ErrInvalidDocument},
-		{SimpleDocument{1, []float64{3, 3, 3}}, ErrNoVectorComplexity},
-		{SimpleDocument{2, []float64{3, 3, 0}}, nil},
-		{SimpleDocument{2, []float64{1, 2, 3}}, ErrDuplicateDocument},
+		{NewSimpleDocument(0, []float64{0, 1}), ErrInvalidDocument},
+		{NewSimpleDocument(1, []float64{3, 3, 3}), ErrNoVectorComplexity},
+		{NewSimpleDocument(2, []float64{3, 3, 0}), nil},
+		{NewSimpleDocument(2, []float64{1, 2, 3}), ErrDuplicateDocument},
 	}
 	for _, td := range testData {
 		if err := lsh.Index(td.doc); err != td.expectedErr {
@@ -245,11 +245,11 @@ func TestDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	docs := []SimpleDocument{
-		{0, []float64{0, 1, 3}},
-		{1, []float64{1, 3, 3}},
-		{2, []float64{3, 3, 0}},
-		{3, []float64{1, 2, 3}},
+	docs := []Document{
+		NewSimpleDocument(0, []float64{0, 1, 3}),
+		NewSimpleDocument(1, []float64{1, 3, 3}),
+		NewSimpleDocument(2, []float64{3, 3, 0}),
+		NewSimpleDocument(3, []float64{1, 2, 3}),
 	}
 
 	for _, d := range docs {
@@ -274,19 +274,19 @@ func TestSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	docs := []SimpleDocument{
-		{0, []float64{0, 1, 3}},
-		{1, []float64{1, 3, 3}},
-		{2, []float64{3, 3, 0}},
-		{3, []float64{1, 2, 3}},
+	docs := []Document{
+		NewSimpleDocument(0, []float64{0, 1, 3}),
+		NewSimpleDocument(1, []float64{1, 3, 3}),
+		NewSimpleDocument(2, []float64{3, 3, 0}),
+		NewSimpleDocument(3, []float64{1, 2, 3}),
 	}
 
-	docGroups := []SimpleDocument{
-		{4, []float64{-7, 8, -9}},
-		{5, []float64{-7, 9, -5.5}},
-		{6, []float64{-7, 9, -7}},
-		{7, []float64{-7, 10, -7}},
-		{8, []float64{-5, -3, -2}},
+	docGroups := []Document{
+		NewSimpleDocument(4, []float64{-7, 8, -9}),
+		NewSimpleDocument(5, []float64{-7, 9, -5.5}),
+		NewSimpleDocument(6, []float64{-7, 9, -7}),
+		NewSimpleDocument(7, []float64{-7, 10, -7}),
+		NewSimpleDocument(8, []float64{-5, -3, -2}),
 	}
 
 	for _, d := range docs {
@@ -422,12 +422,12 @@ func TestLSHStats(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	docs := []SimpleDocument{
-		{0, []float64{0, 0, 5}},
-		{1, []float64{0, 0.1, 3}},
-		{2, []float64{0, 0.1, 2}},
-		{3, []float64{0, 0.1, 1}},
-		{4, []float64{0, -0.1, -4}},
+	docs := []Document{
+		NewSimpleDocument(0, []float64{0, 0, 5}),
+		NewSimpleDocument(1, []float64{0, 0.1, 3}),
+		NewSimpleDocument(2, []float64{0, 0.1, 2}),
+		NewSimpleDocument(3, []float64{0, 0.1, 1}),
+		NewSimpleDocument(4, []float64{0, -0.1, -4}),
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -505,7 +505,7 @@ func BenchmarkLSHIndex(b *testing.B) {
 			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(i), vec}
+		doc := NewSimpleDocument(uint64(i), vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -528,7 +528,7 @@ func BenchmarkLSHSearchSingleHyperplane(b *testing.B) {
 			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), vec}
+		doc := NewSimpleDocument(uint64(n), vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -563,7 +563,7 @@ func BenchmarkLSHSearchPositive(b *testing.B) {
 			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), vec}
+		doc := NewSimpleDocument(uint64(n), vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -639,7 +639,7 @@ func BenchmarkLSHSearchRealistic(b *testing.B) {
 			vec[j] += rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), vec}
+		doc := NewSimpleDocument(uint64(n), vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -713,7 +713,7 @@ func BenchmarkLSHSearchRealisticSingleHyperplane(b *testing.B) {
 			vec[j] += rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), vec}
+		doc := NewSimpleDocument(uint64(n), vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -747,7 +747,7 @@ func BenchmarkLSHDelete(b *testing.B) {
 			vec[j] = rand.Float64()
 		}
 
-		doc := SimpleDocument{uint64(n), vec}
+		doc := NewSimpleDocument(uint64(n), vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}

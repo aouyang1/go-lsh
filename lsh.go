@@ -36,11 +36,19 @@ var (
 	ErrInvalidSignFilter         = errors.New("invalid sign filter, must be any, neg, or pos")
 )
 
+type TransformFunc func([]float64) []float64
+
+func NewDefaultTransformFunc(vec []float64) []float64 {
+	floats.Scale(1.0/floats.Norm(vec, 2), vec)
+	return vec
+}
+
 // Options represents a set of parameters that configure the LSH tables
 type Options struct {
 	NumHyperplanes int
 	NumTables      int
 	VectorLength   int
+	tFunc          TransformFunc // transformation to vector on index and search
 }
 
 // NewDefaultOptions returns a set of default options to create the LSH tables
@@ -49,6 +57,7 @@ func NewDefaultOptions() *Options {
 		NumHyperplanes: 8,   // more hyperplanes increases false negatives decrease number of direct comparisons
 		NumTables:      128, // more tables means we'll decrease false negatives at the cost of more direct comparisons
 		VectorLength:   3,
+		tFunc:          NewDefaultTransformFunc,
 	}
 }
 
@@ -76,9 +85,9 @@ func (o *Options) Validate() error {
 // the configured number of hyperplanes along with the documents currently indexed.
 type LSH struct {
 	Opt              *Options
-	HyperplaneTables []*Hyperplanes // N sets of randomly generated hyperplanes
-	Tables           []*Table       // N tables each using a different randomly generated set of hyperplanes
-	Docs             map[uint64]Document
+	HyperplaneTables []*Hyperplanes      // N sets of randomly generated hyperplanes
+	Tables           []*Table            // N tables each using a different randomly generated set of hyperplanes
+	Docs             map[uint64]Document // forward index which may be offloaded to a separate system
 }
 
 // New returns a new Locality Sensitive Hash struct ready for indexing and searching
@@ -121,7 +130,8 @@ func (l *LSH) Index(d Document) error {
 	if _, exists := l.Docs[uid]; exists {
 		return ErrDuplicateDocument
 	}
-	floats.Scale(1.0/floats.Norm(vec, 2), vec)
+
+	vec = l.Opt.tFunc(vec)
 
 	if err := l.index(d); err != nil {
 		return err
@@ -215,9 +225,9 @@ func (l *LSH) Search(v []float64, s *SearchOptions) (Scores, int, error) {
 }
 
 // Filter returns a set of document ids that match the given vector and search options
-// along with the input vector noramlized
-func (l *LSH) Filter(v []float64, s *SearchOptions) ([]uint64, []float64, error) {
-	if len(v) != l.Opt.VectorLength {
+// along with the input vector normalized
+func (l *LSH) Filter(vec []float64, s *SearchOptions) ([]uint64, []float64, error) {
+	if len(vec) != l.Opt.VectorLength {
 		return nil, nil, ErrInvalidDocument
 	}
 
@@ -229,10 +239,7 @@ func (l *LSH) Filter(v []float64, s *SearchOptions) ([]uint64, []float64, error)
 		}
 	}
 
-	// create copy as to not modify input vector
-	vec := make([]float64, len(v))
-	copy(vec, v)
-	floats.Scale(1.0/floats.Norm(vec, 2), vec)
+	vec = l.Opt.tFunc(vec)
 
 	var docIds []uint64
 	// search for positively correlated results
