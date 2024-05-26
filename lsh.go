@@ -84,10 +84,9 @@ func (o *Options) Validate() error {
 // LSH represents the locality sensitive hash struct that stores the multiple tables containing
 // the configured number of hyperplanes along with the documents currently indexed.
 type LSH struct {
-	Opt              *Options
-	HyperplaneTables []*Hyperplanes      // N sets of randomly generated hyperplanes
-	Tables           []*Table            // N tables each using a different randomly generated set of hyperplanes
-	Docs             map[uint64]Document // forward index which may be offloaded to a separate system
+	Opt    *Options
+	Tables []*Table            // N tables each using a different randomly generated set of hyperplanes
+	Docs   map[uint64]Document // forward index which may be offloaded to a separate system
 }
 
 // New returns a new Locality Sensitive Hash struct ready for indexing and searching
@@ -98,15 +97,15 @@ func New(opt *Options) (*LSH, error) {
 	l := new(LSH)
 	l.Opt = opt
 
-	l.HyperplaneTables = make([]*Hyperplanes, 0, opt.NumTables)
+	hyperplaneTables := make([]*Hyperplanes, 0, opt.NumTables)
 	for i := 0; i < opt.NumTables; i++ {
 		ht, err := NewHyperplanes(opt.NumHyperplanes, opt.VectorLength)
 		if err != nil {
 			return nil, err
 		}
-		l.HyperplaneTables = append(l.HyperplaneTables, ht)
+		hyperplaneTables = append(hyperplaneTables, ht)
 	}
-	tables, err := NewTables(l.Opt, l.HyperplaneTables)
+	tables, err := NewTables(l.Opt, hyperplaneTables)
 	if err != nil {
 		return nil, err
 	}
