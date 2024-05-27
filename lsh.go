@@ -23,6 +23,8 @@ var (
 	ErrInvalidNumHyperplanes     = errors.New("invalid number of hyperplanes, must be at least 1")
 	ErrInvalidNumTables          = errors.New("invalid number of tables, must be at least 1")
 	ErrInvalidVectorLength       = errors.New("invalid vector length, must be at least 1")
+	ErrInvalidSamplePeriod       = errors.New("invalid sample period, must be at least 1")
+	ErrInvalidRowSize            = errors.New("invalid row size, must be at least 1")
 	ErrInvalidDocument           = errors.New("vector length does not match with the configured options")
 	ErrDuplicateDocument         = errors.New("document is already indexed")
 	ErrNoOptions                 = errors.New("no options set for LSH")
@@ -48,6 +50,8 @@ type Options struct {
 	NumHyperplanes int
 	NumTables      int
 	VectorLength   int
+	SamplePeriod   int64         // expected time period between each sample in the vector
+	RowSize        int64         // size of each range of store bitmaps per table. Larger values will generally store more uids
 	tFunc          TransformFunc // transformation to vector on index and search
 }
 
@@ -57,6 +61,8 @@ func NewDefaultOptions() *Options {
 		NumHyperplanes: 8,   // more hyperplanes increases false negatives decrease number of direct comparisons
 		NumTables:      128, // more tables means we'll decrease false negatives at the cost of more direct comparisons
 		VectorLength:   3,
+		SamplePeriod:   60,   // defaults to 1m between each sample in the vector
+		RowSize:        7200, // if the index represents seconds from epoch then this would translate to a table window of 2hrs
 		tFunc:          NewDefaultTransformFunc,
 	}
 }
@@ -76,6 +82,14 @@ func (o *Options) Validate() error {
 
 	if o.VectorLength < 1 {
 		return ErrInvalidVectorLength
+	}
+
+	if o.SamplePeriod < 1 {
+		return ErrInvalidSamplePeriod
+	}
+
+	if o.RowSize < 1 {
+		return ErrInvalidRowSize
 	}
 
 	return nil
@@ -165,6 +179,7 @@ type SearchOptions struct {
 	NumToReturn int        `json:"num_to_return"`
 	Threshold   float64    `json:"threshold"`
 	SignFilter  SignFilter `json:"sign_filter"`
+	MaxLag      int64      `json:"max_lag"` // -1 means any lag
 }
 
 // Validate returns an error if any of the input options are invalid
@@ -180,6 +195,11 @@ func (s *SearchOptions) Validate() error {
 	default:
 		return ErrInvalidSignFilter
 	}
+
+	if s.MaxLag < -1 {
+		s.MaxLag = -1
+	}
+
 	return nil
 }
 
@@ -189,12 +209,14 @@ func NewDefaultSearchOptions() *SearchOptions {
 		NumToReturn: 10,
 		Threshold:   0.85,
 		SignFilter:  SignFilter_ANY,
+		MaxLag:      900, // translates to 15m if index is seconds from epoch
 	}
 }
 
 // Search looks through and merges results from all tables to find the nearest neighbors to the
 // provided vector
-func (l *LSH) Search(v []float64, s *SearchOptions) (Scores, int, error) {
+func (l *LSH) Search(d Document, s *SearchOptions) (Scores, int, error) {
+	v := d.GetVector()
 	if len(v) != l.Opt.VectorLength {
 		return nil, 0, ErrInvalidDocument
 	}
@@ -207,45 +229,46 @@ func (l *LSH) Search(v []float64, s *SearchOptions) (Scores, int, error) {
 		}
 	}
 
-	docIds, nv, err := l.Filter(v, s)
+	docIds, err := l.Filter(d, s)
 	if err != nil {
 		return nil, 0, err
 	}
 	res := NewResults(s.NumToReturn, s.Threshold, SignFilter_POS)
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		l.Score(nv, docIds, res)
+		l.Score(d, docIds, res)
 	}
 
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
-		floats.Scale(-1, nv)
-		l.Score(nv, docIds, res)
+		floats.Scale(-1, d.GetVector())
+		l.Score(d, docIds, res)
+		floats.Scale(-1, d.GetVector())
 	}
 	return res.Fetch(), res.NumScored, nil
 }
 
 // Filter returns a set of document ids that match the given vector and search options
-// along with the input vector normalized
-func (l *LSH) Filter(vec []float64, s *SearchOptions) ([]uint64, []float64, error) {
+func (l *LSH) Filter(d Document, s *SearchOptions) ([]uint64, error) {
+	vec := d.GetVector()
 	if len(vec) != l.Opt.VectorLength {
-		return nil, nil, ErrInvalidDocument
+		return nil, ErrInvalidDocument
 	}
 
 	if s == nil {
 		s = NewDefaultSearchOptions()
 	} else {
 		if err := s.Validate(); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
-	vec = l.Opt.tFunc(vec)
+	l.Opt.tFunc(vec)
 
 	var docIds []uint64
 	// search for positively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		dids, err := l.filter(vec)
+		dids, err := l.filter(d, s.MaxLag)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		docIds = append(docIds, dids...)
 	}
@@ -253,18 +276,19 @@ func (l *LSH) Filter(vec []float64, s *SearchOptions) ([]uint64, []float64, erro
 	// search for negatively correlated results
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
 		floats.Scale(-1, vec)
-		dids, err := l.filter(vec)
+		dids, err := l.filter(d, s.MaxLag)
 		if err != nil {
-			return nil, nil, err
+			floats.Scale(-1, vec) // undo negation
+			return nil, err
 		}
 		floats.Scale(-1, vec) // undo negation
 		docIds = append(docIds, dids...)
 	}
 
-	return docIds, vec, nil
+	return docIds, nil
 }
 
-func (l *LSH) filter(v []float64) ([]uint64, error) {
+func (l *LSH) filter(d Document, maxLag int64) ([]uint64, error) {
 	rbRes := roaring64.New()
 	var resLock sync.Mutex
 	var wg sync.WaitGroup
@@ -273,17 +297,11 @@ func (l *LSH) filter(v []float64) ([]uint64, error) {
 	for _, t := range l.Tables {
 		go func(tbl *Table) {
 			defer wg.Done()
-			hash, _ := tbl.Hyperplanes.Hash16(v)
-			rb := tbl.Table[hash]
-			if rb == nil {
-				// vector hash not present in hyperplane partition
-				return
-			}
-			rb.mu.Lock()
+			rowRbRes := tbl.filter(d, maxLag)
+
 			resLock.Lock()
-			rbRes.Or(rb.Rb)
+			rbRes.Or(rowRbRes)
 			resLock.Unlock()
-			rb.mu.Unlock()
 		}(t)
 	}
 	wg.Wait()
@@ -292,13 +310,13 @@ func (l *LSH) filter(v []float64) ([]uint64, error) {
 }
 
 // Score takes a set of document ids and scores them against a provided search query
-func (l *LSH) Score(v []float64, docIds []uint64, res *Results) {
+func (l *LSH) Score(d Document, docIds []uint64, res *Results) {
 	for _, uid := range docIds {
 		doc, exists := l.Docs[uid]
 		if !exists || doc == nil {
 			continue
 		}
-		score := stat.Correlation(v, doc.GetVector(), nil)
+		score := stat.Correlation(d.GetVector(), doc.GetVector(), nil)
 		res.Update(Score{uid, score})
 	}
 }
