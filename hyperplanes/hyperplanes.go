@@ -1,4 +1,4 @@
-package lsh
+package hyperplanes
 
 import (
 	"encoding/binary"
@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"math/rand"
 
+	"github.com/aouyang1/go-lsh/configs"
 	"gonum.org/v1/gonum/floats"
 )
 
 var (
 	ErrNumHyperplanesExceedHashBits = errors.New("number of hyperplanes exceeds available bits to encode vector")
+	ErrNoVector                     = errors.New("no vector provided")
+	ErrVectorLengthMismatch         = errors.New("vector length mismatch")
 )
 
 // Hyperplanes is composed of a number of randomly generated unit vectors where the vector length is based on the
@@ -19,13 +22,13 @@ type Hyperplanes struct {
 	Planes [][]float64
 }
 
-func NewHyperplanes(numHyperplanes, vecLen int) (*Hyperplanes, error) {
+func New(numHyperplanes, vecLen int) (*Hyperplanes, error) {
 	if numHyperplanes < 1 {
-		return nil, ErrInvalidNumHyperplanes
+		return nil, configs.ErrInvalidNumHyperplanes
 	}
 
 	if vecLen < 1 {
-		return nil, ErrInvalidVectorLength
+		return nil, configs.ErrInvalidVectorLength
 	}
 
 	h := new(Hyperplanes)

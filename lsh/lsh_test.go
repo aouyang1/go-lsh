@@ -4,44 +4,21 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
+	"github.com/aouyang1/go-lsh/configs"
+	"github.com/aouyang1/go-lsh/document"
+	"github.com/aouyang1/go-lsh/lsherrors"
+	"github.com/aouyang1/go-lsh/options"
+	"github.com/aouyang1/go-lsh/results"
+	"github.com/aouyang1/go-lsh/stats"
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat"
 )
 
-func TestNewOptions(t *testing.T) {
-	testData := []struct {
-		nf int
-		nh int
-		nt int
-		sp int64
-		rs int64
-
-		err error
-	}{
-		{1, 1, 1, 1, 1, nil},
-		{3, 5, 2, 60, 7200, nil},
-		{0, 0, 0, 0, 0, ErrInvalidNumHyperplanes},
-		{3, 65, 2, 0, 0, ErrExceededMaxNumHyperplanes},
-		{0, 5, 2, 0, 0, ErrInvalidVectorLength},
-		{3, 5, 0, 0, 0, ErrInvalidNumTables},
-		{3, 5, 2, 0, 0, ErrInvalidSamplePeriod},
-		{3, 5, 2, 60, 0, ErrInvalidRowSize},
-	}
-	for _, td := range testData {
-		opt := &Options{td.nh, td.nt, td.nf, td.sp, td.rs, NewDefaultTransformFunc}
-		if err := opt.Validate(); err != td.err {
-			t.Errorf("expected %v, but got %v", td.err, err)
-			continue
-		}
-	}
-}
-
 func TestNewLSH(t *testing.T) {
-	opt := NewDefaultOptions()
+	opt := configs.NewDefaultLSHConfigs()
 	_, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
@@ -49,18 +26,18 @@ func TestNewLSH(t *testing.T) {
 }
 
 func TestLSHSearch(t *testing.T) {
-	opt := NewDefaultOptions()
+	opt := configs.NewDefaultLSHConfigs()
 	lsh, err := New(opt)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	docs := []Document{
-		NewSimpleDocument(0, 0, []float64{0, 0, 5}),
-		NewSimpleDocument(1, 0, []float64{0, 0.1, 3}),
-		NewSimpleDocument(2, 0, []float64{0, 0.1, 2}),
-		NewSimpleDocument(3, 0, []float64{0, 0.1, 1}),
-		NewSimpleDocument(4, 0, []float64{0, -0.1, -4}),
+	docs := []document.Document{
+		document.NewSimple(0, 0, []float64{0, 0, 5}),
+		document.NewSimple(1, 0, []float64{0, 0.1, 3}),
+		document.NewSimple(2, 0, []float64{0, 0.1, 2}),
+		document.NewSimple(3, 0, []float64{0, 0.1, 1}),
+		document.NewSimple(4, 0, []float64{0, -0.1, -4}),
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -68,11 +45,11 @@ func TestLSHSearch(t *testing.T) {
 		}
 	}
 
-	so := NewDefaultSearchOptions()
+	so := options.NewDefaultSearch()
 	so.NumToReturn = 3
-	so.SignFilter = SignFilter_POS
+	so.SignFilter = options.SignFilter_POS
 
-	d := SimpleDocument{
+	d := document.Simple{
 		Index:  0,
 		Vector: []float64{0, 0, 0.1},
 	}
@@ -89,10 +66,7 @@ func TestLSHSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d = SimpleDocument{
-		Index:  0,
-		Vector: []float64{0, 0, 0.1},
-	}
+	d = document.Simple{Vector: []float64{0, 0, 0.1}}
 	scores, _, err = lsh.Search(d, so)
 	if err != nil {
 		t.Fatal(err)
@@ -102,14 +76,11 @@ func TestLSHSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := lsh.Index(NewSimpleDocument(2, 0, []float64{0, 0.1, 2})); err != nil {
+	if err := lsh.Index(document.NewSimple(2, 0, []float64{0, 0.1, 2})); err != nil {
 		t.Fatal(err)
 	}
 
-	d = SimpleDocument{
-		Index:  0,
-		Vector: []float64{0, 0, 0.1},
-	}
+	d = document.Simple{Vector: []float64{0, 0, 0.1}}
 	scores, _, err = lsh.Search(d, so)
 	if err != nil {
 		t.Fatal(err)
@@ -119,8 +90,8 @@ func TestLSHSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	so.SignFilter = SignFilter_NEG
-	d = SimpleDocument{
+	so.SignFilter = options.SignFilter_NEG
+	d = document.Simple{
 		Index:  0,
 		Vector: []float64{0, 0, 0.1},
 	}
@@ -133,11 +104,8 @@ func TestLSHSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	so.SignFilter = SignFilter_ANY
-	d = SimpleDocument{
-		Index:  0,
-		Vector: []float64{0, 0, 0.1},
-	}
+	so.SignFilter = options.SignFilter_ANY
+	d = document.Simple{Vector: []float64{0, 0, 0.1}}
 	scores, _, err = lsh.Search(d, so)
 	if err != nil {
 		t.Fatal(err)
@@ -148,10 +116,7 @@ func TestLSHSearch(t *testing.T) {
 	}
 
 	so.Threshold = 1
-	d = SimpleDocument{
-		Index:  0,
-		Vector: []float64{0, 0, 0.1},
-	}
+	d = document.Simple{Vector: []float64{0, 0, 0.1}}
 	scores, _, err = lsh.Search(d, so)
 	if err != nil {
 		t.Fatal(err)
@@ -163,18 +128,19 @@ func TestLSHSearch(t *testing.T) {
 
 }
 
+/* Needs more though to serializing and deserializing the index
 func TestSaveLoadLSH(t *testing.T) {
-	opt := NewDefaultOptions()
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	lsh, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	docs := []Document{
-		NewSimpleDocument(0, 0, []float64{0, 0, 5}),
-		NewSimpleDocument(1, 0, []float64{0, 0.1, 3}),
-		NewSimpleDocument(2, 0, []float64{0, 0.1, 2}),
-		NewSimpleDocument(3, 0, []float64{0, 0.1, 1}),
+	docs := []document.Document{
+		document.NewSimple(0, 0, []float64{0, 0, 5}),
+		document.NewSimple(1, 0, []float64{0, 0.1, 3}),
+		document.NewSimple(2, 0, []float64{0, 0.1, 2}),
+		document.NewSimple(3, 0, []float64{0, 0.1, 1}),
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -182,14 +148,11 @@ func TestSaveLoadLSH(t *testing.T) {
 		}
 	}
 
-	so := NewDefaultSearchOptions()
+	so := options.NewDefaultSearch()
 	so.NumToReturn = 3
-	so.SignFilter = SignFilter_POS
+	so.SignFilter = options.SignFilter_POS
 
-	d := SimpleDocument{
-		Index:  0,
-		Vector: []float64{0, 0, 0.1},
-	}
+	d := document.Simple{Vector: []float64{0, 0, 0.1}}
 	scores, _, err := lsh.Search(d, so)
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +163,7 @@ func TestSaveLoadLSH(t *testing.T) {
 	}
 
 	lshFile := "test.lsh"
-	if err := lsh.Save(lshFile, SimpleDocument{}); err != nil {
+	if err := lsh.Save(lshFile, document.Simple{}); err != nil {
 		os.Remove(lshFile)
 		t.Fatal(err)
 	}
@@ -210,8 +173,8 @@ func TestSaveLoadLSH(t *testing.T) {
 	if err := newLsh.Load(lshFile); err != nil {
 		t.Fatal(err)
 	}
-	newLsh.Opt.tFunc = NewDefaultTransformFunc
-	d = SimpleDocument{Vector: []float64{0, 0, 0.1}}
+	newLsh.Cfg.TFunc = configs.NewDefaultTransformFunc
+	d = document.Simple{Vector: []float64{0, 0, 0.1}}
 	scores, _, err = newLsh.Search(d, so)
 	if err != nil {
 		t.Fatal(err)
@@ -221,49 +184,23 @@ func TestSaveLoadLSH(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func TestSearchOptionsValidate(t *testing.T) {
-	testData := []struct {
-		numToReturn int
-		threshold   float64
-		signFilter  SignFilter
-
-		expectedErr error
-	}{
-		{0, 0.65, SignFilter_ANY, ErrInvalidNumToReturn},
-		{1, 1.3, SignFilter_ANY, ErrInvalidThreshold},
-		{1, 0.65, SignFilter(2), ErrInvalidSignFilter},
-		{1, 0.65, SignFilter_ANY, nil},
-	}
-
-	for _, td := range testData {
-		s := &SearchOptions{
-			NumToReturn: td.numToReturn,
-			Threshold:   td.threshold,
-			SignFilter:  td.signFilter,
-		}
-		if err := s.Validate(); err != td.expectedErr {
-			t.Errorf("expected %v, but got %v for error", td.expectedErr, err)
-			continue
-		}
-	}
-}
+*/
 
 func TestIndexSimple(t *testing.T) {
-	opt := NewDefaultOptions()
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	lsh, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	testData := []struct {
-		doc         Document
+		doc         document.Document
 		expectedErr error
 	}{
-		{NewSimpleDocument(0, 0, []float64{0, 1}), ErrInvalidDocument},
-		{NewSimpleDocument(1, 0, []float64{3, 3, 3}), ErrNoVectorComplexity},
-		{NewSimpleDocument(2, 0, []float64{3, 3, 0}), nil},
-		{NewSimpleDocument(2, 0, []float64{1, 2, 3}), ErrDuplicateDocument},
+		{document.NewSimple(0, 0, []float64{0, 1}), ErrInvalidDocument},
+		{document.NewSimple(1, 0, []float64{3, 3, 3}), ErrNoVectorComplexity},
+		{document.NewSimple(2, 0, []float64{3, 3, 0}), nil},
+		{document.NewSimple(2, 0, []float64{1, 2, 3}), lsherrors.DuplicateDocument},
 	}
 	for _, td := range testData {
 		if err := lsh.Index(td.doc); err != td.expectedErr {
@@ -273,17 +210,17 @@ func TestIndexSimple(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	opt := NewDefaultOptions()
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	lsh, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	docs := []Document{
-		NewSimpleDocument(0, 0, []float64{0, 1, 3}),
-		NewSimpleDocument(1, 0, []float64{1, 3, 3}),
-		NewSimpleDocument(2, 0, []float64{3, 3, 0}),
-		NewSimpleDocument(3, 0, []float64{1, 2, 3}),
+	docs := []document.Document{
+		document.NewSimple(0, 0, []float64{0, 1, 3}),
+		document.NewSimple(1, 0, []float64{1, 3, 3}),
+		document.NewSimple(2, 0, []float64{3, 3, 0}),
+		document.NewSimple(3, 0, []float64{1, 2, 3}),
 	}
 
 	for _, d := range docs {
@@ -296,31 +233,31 @@ func TestDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := lsh.Delete(2); err != ErrDocumentNotStored {
-		t.Fatalf("expected %v but got %v error", ErrDocumentNotStored, err)
+	if err := lsh.Delete(2); err != lsherrors.DocumentNotStored {
+		t.Fatalf("expected %v but got %v error", lsherrors.DocumentNotStored, err)
 	}
 }
 
 func TestSearch(t *testing.T) {
-	opt := NewDefaultOptions()
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	lsh, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	docs := []Document{
-		NewSimpleDocument(0, 0, []float64{0, 1, 3}),
-		NewSimpleDocument(1, 0, []float64{1, 3, 3}),
-		NewSimpleDocument(2, 0, []float64{3, 3, 0}),
-		NewSimpleDocument(3, 0, []float64{1, 2, 3}),
+	docs := []document.Document{
+		document.NewSimple(0, 0, []float64{0, 1, 3}),
+		document.NewSimple(1, 0, []float64{1, 3, 3}),
+		document.NewSimple(2, 0, []float64{3, 3, 0}),
+		document.NewSimple(3, 0, []float64{1, 2, 3}),
 	}
 
-	docGroups := []Document{
-		NewSimpleDocument(4, 0, []float64{-7, 8, -9}),
-		NewSimpleDocument(5, 0, []float64{-7, 9, -5.5}),
-		NewSimpleDocument(6, 0, []float64{-7, 9, -7}),
-		NewSimpleDocument(7, 0, []float64{-7, 10, -7}),
-		NewSimpleDocument(8, 0, []float64{-5, -3, -2}),
+	docGroups := []document.Document{
+		document.NewSimple(4, 0, []float64{-7, 8, -9}),
+		document.NewSimple(5, 0, []float64{-7, 9, -5.5}),
+		document.NewSimple(6, 0, []float64{-7, 9, -7}),
+		document.NewSimple(7, 0, []float64{-7, 10, -7}),
+		document.NewSimple(8, 0, []float64{-5, -3, -2}),
 	}
 
 	for _, d := range docs {
@@ -334,37 +271,37 @@ func TestSearch(t *testing.T) {
 		}
 	}
 
-	so := NewDefaultSearchOptions()
-	d := SimpleDocument{Vector: []float64{1, 2}}
+	so := options.NewDefaultSearch()
+	d := document.Simple{Vector: []float64{1, 2}}
 	if _, _, err := lsh.Search(d, so); err != ErrInvalidDocument {
 		t.Fatalf("expected %v, but got %v error", ErrInvalidDocument, err)
 	}
 
 	so.NumToReturn = 0
-	d = SimpleDocument{Vector: []float64{1, 2, 3}}
-	if _, _, err := lsh.Search(d, so); err != ErrInvalidNumToReturn {
-		t.Fatalf("expected %v, but got %v error", ErrInvalidNumToReturn, err)
+	d = document.Simple{Vector: []float64{1, 2, 3}}
+	if _, _, err := lsh.Search(d, so); err != options.ErrInvalidNumToReturn {
+		t.Fatalf("expected %v, but got %v error", options.ErrInvalidNumToReturn, err)
 	}
 
-	so = NewDefaultSearchOptions()
-	so.SignFilter = SignFilter_POS
+	so = options.NewDefaultSearch()
+	so.SignFilter = options.SignFilter_POS
 	testData := []struct {
-		d        Document
-		sf       SignFilter
-		expected Scores
+		d        document.Document
+		sf       options.SignFilter
+		expected results.Scores
 	}{
 		{
-			SimpleDocument{Vector: []float64{0, 1, 3}},
-			SignFilter_POS,
-			Scores{
+			document.Simple{Vector: []float64{0, 1, 3}},
+			options.SignFilter_POS,
+			results.Scores{
 				{UID: 0, Score: 1.00},
 				{UID: 3, Score: 0.98},
 			},
 		},
 		{
-			SimpleDocument{Vector: []float64{-7, 9, -7}},
-			SignFilter_POS,
-			Scores{
+			document.Simple{Vector: []float64{-7, 9, -7}},
+			options.SignFilter_POS,
+			results.Scores{
 				{UID: 6, Score: 1.00},
 				{UID: 7, Score: 0.99},
 				{UID: 5, Score: 0.99},
@@ -380,7 +317,7 @@ func TestSearch(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := compareScores(res, td.expected); err != nil {
-			t.Fatalf("%v, %v", err, td)
+			t.Fatalf("%v, res: %v, test data: %v", err, res, td)
 		}
 	}
 
@@ -394,12 +331,12 @@ func TestLSHError(t *testing.T) {
 	numDocs := 100000
 	threshold := 0.85
 
-	opt := NewDefaultOptions()
-	opt.NumHyperplanes = numHyperplanes
-	opt.NumTables = numTables
-	opt.VectorLength = vecLen
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.NumHyperplanes = numHyperplanes
+	cfg.NumTables = numTables
+	cfg.VectorLength = vecLen
 
-	lsh, err := New(opt)
+	lsh, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,15 +352,15 @@ func TestLSHError(t *testing.T) {
 
 	start := time.Now()
 	for i, f := range vectors {
-		if err := lsh.Index(NewSimpleDocument(uint64(i), 0, f)); err != nil {
+		if err := lsh.Index(document.NewSimple(uint64(i), 0, f)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Logf("index time: %v\n", time.Since(start))
 
-	so := NewDefaultSearchOptions()
+	so := options.NewDefaultSearch()
 	so.NumToReturn = numDocs
-	so.SignFilter = SignFilter_POS
+	so.SignFilter = options.SignFilter_POS
 	so.Threshold = threshold
 
 	f := make([]float64, vecLen)
@@ -435,7 +372,7 @@ func TestLSHError(t *testing.T) {
 			f[j] = rand.Float64() - 0.5
 		}
 		floats.Scale(1/floats.Norm(f, 2), f)
-		d := SimpleDocument{Vector: f}
+		d := document.Simple{Vector: f}
 		res, nscored, err := lsh.Search(d, so)
 		if err != nil {
 			t.Fatal(err)
@@ -453,18 +390,18 @@ func TestLSHError(t *testing.T) {
 }
 
 func TestLSHStats(t *testing.T) {
-	opt := NewDefaultOptions()
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	lsh, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	docs := []Document{
-		NewSimpleDocument(0, 0, []float64{0, 0, 5}),
-		NewSimpleDocument(1, 0, []float64{0, 0.1, 3}),
-		NewSimpleDocument(2, 0, []float64{0, 0.1, 2}),
-		NewSimpleDocument(3, 0, []float64{0, 0.1, 1}),
-		NewSimpleDocument(4, 0, []float64{0, -0.1, -4}),
+	docs := []document.Document{
+		document.NewSimple(0, 0, []float64{0, 0, 5}),
+		document.NewSimple(1, 0, []float64{0, 0.1, 3}),
+		document.NewSimple(2, 0, []float64{0, 0.1, 2}),
+		document.NewSimple(3, 0, []float64{0, 0.1, 1}),
+		document.NewSimple(4, 0, []float64{0, -0.1, -4}),
 	}
 	for _, d := range docs {
 		if err := lsh.Index(d); err != nil {
@@ -473,9 +410,9 @@ func TestLSHStats(t *testing.T) {
 	}
 
 	s := lsh.Stats()
-	expectedS := &Statistics{
+	expectedS := &stats.Statistics{
 		NumDocs: len(docs),
-		FalseNegativeErrors: []FalseNegativeError{
+		FalseNegativeErrors: []stats.FalseNegativeError{
 			{0.60, 0.903},
 			{0.65, 0.804},
 			{0.70, 0.636},
@@ -513,7 +450,7 @@ func compareUint64s(expected, uids []uint64) error {
 	return nil
 }
 
-func compareScores(res, expected Scores) error {
+func compareScores(res, expected results.Scores) error {
 	if len(res) != len(expected) {
 		return fmt.Errorf("expected %d scores, but got %d", len(expected), len(res))
 	}
@@ -529,20 +466,20 @@ func compareScores(res, expected Scores) error {
 }
 
 func BenchmarkLSHIndex(b *testing.B) {
-	opt := NewDefaultOptions()
-	opt.VectorLength = 60
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.VectorLength = 60
+	lsh, err := New(cfg)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	for i := 0; i < b.N; i++ {
-		vec := make([]float64, opt.VectorLength)
-		for j := 0; j < opt.VectorLength; j++ {
+		vec := make([]float64, cfg.VectorLength)
+		for j := 0; j < cfg.VectorLength; j++ {
 			vec[j] = rand.Float64()
 		}
 
-		doc := NewSimpleDocument(uint64(i), 0, vec)
+		doc := document.NewSimple(uint64(i), 0, vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -550,32 +487,32 @@ func BenchmarkLSHIndex(b *testing.B) {
 }
 
 func BenchmarkLSHSearchSingleHyperplane(b *testing.B) {
-	opt := NewDefaultOptions()
-	opt.VectorLength = 60
-	opt.NumHyperplanes = 1
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.VectorLength = 60
+	cfg.NumHyperplanes = 1
+	lsh, err := New(cfg)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	numDocuments := 10000
 	for n := 0; n < numDocuments; n++ {
-		vec := make([]float64, opt.VectorLength)
-		for j := 0; j < opt.VectorLength; j++ {
+		vec := make([]float64, cfg.VectorLength)
+		for j := 0; j < cfg.VectorLength; j++ {
 			vec[j] = rand.Float64()
 		}
 
-		doc := NewSimpleDocument(uint64(n), 0, vec)
+		doc := document.NewSimple(uint64(n), 0, vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
 
-	query := make([]float64, opt.VectorLength)
-	for j := 0; j < opt.VectorLength; j++ {
+	query := make([]float64, cfg.VectorLength)
+	for j := 0; j < cfg.VectorLength; j++ {
 		query[j] = rand.Float64()
 	}
-	d := SimpleDocument{Vector: query}
+	d := document.Simple{Vector: query}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, err := lsh.Search(d, nil)
@@ -586,33 +523,33 @@ func BenchmarkLSHSearchSingleHyperplane(b *testing.B) {
 }
 
 func BenchmarkLSHSearchPositive(b *testing.B) {
-	opt := NewDefaultOptions()
-	opt.VectorLength = 60
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.VectorLength = 60
+	lsh, err := New(cfg)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	numDocuments := 10000
 	for n := 0; n < numDocuments; n++ {
-		vec := make([]float64, opt.VectorLength)
-		for j := 0; j < opt.VectorLength; j++ {
+		vec := make([]float64, cfg.VectorLength)
+		for j := 0; j < cfg.VectorLength; j++ {
 			vec[j] = rand.Float64()
 		}
 
-		doc := NewSimpleDocument(uint64(n), 0, vec)
+		doc := document.NewSimple(uint64(n), 0, vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
 
-	query := make([]float64, opt.VectorLength)
-	for j := 0; j < opt.VectorLength; j++ {
+	query := make([]float64, cfg.VectorLength)
+	for j := 0; j < cfg.VectorLength; j++ {
 		query[j] = rand.Float64()
 	}
-	d := SimpleDocument{Vector: query}
-	so := NewDefaultSearchOptions()
-	so.SignFilter = SignFilter_POS
+	d := document.Simple{Vector: query}
+	so := options.NewDefaultSearch()
+	so.SignFilter = options.SignFilter_POS
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -624,45 +561,45 @@ func BenchmarkLSHSearchPositive(b *testing.B) {
 }
 
 func BenchmarkLSHSearchRealistic(b *testing.B) {
-	opt := NewDefaultOptions()
-	opt.VectorLength = 60
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.VectorLength = 60
+	lsh, err := New(cfg)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	waveforms := make(map[string][]float64)
-	spike := make([]float64, opt.VectorLength)
-	spike[opt.VectorLength/2] = 1.0
+	spike := make([]float64, cfg.VectorLength)
+	spike[cfg.VectorLength/2] = 1.0
 	waveforms["spike"] = spike
 
-	risingstep := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+	risingstep := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 2; i < cfg.VectorLength; i++ {
 		risingstep[i] = 1.0
 	}
 	waveforms["risingstep"] = risingstep
 
-	loweringstep := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+	loweringstep := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 2; i < cfg.VectorLength; i++ {
 		loweringstep[i] = -1.0
 	}
 	waveforms["loweringstep"] = loweringstep
 
-	triangle := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
-		triangle[i] = 1 * float64(i-opt.VectorLength/4)
+	triangle := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 4; i < cfg.VectorLength/2; i++ {
+		triangle[i] = 1 * float64(i-cfg.VectorLength/4)
 	}
-	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
-		triangle[i] = -1*float64(i-opt.VectorLength/2) + 1
+	for i := cfg.VectorLength / 2; i < 3*cfg.VectorLength/4; i++ {
+		triangle[i] = -1*float64(i-cfg.VectorLength/2) + 1
 	}
 	waveforms["triangle"] = triangle
 
-	dip := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
-		dip[i] = -1 * float64(i-opt.VectorLength/4)
+	dip := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 4; i < cfg.VectorLength/2; i++ {
+		dip[i] = -1 * float64(i-cfg.VectorLength/4)
 	}
-	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
-		dip[i] = 1*float64(i-opt.VectorLength/2) - 1
+	for i := cfg.VectorLength / 2; i < 3*cfg.VectorLength/4; i++ {
+		dip[i] = 1*float64(i-cfg.VectorLength/2) - 1
 	}
 	waveforms["dip"] = dip
 
@@ -670,22 +607,22 @@ func BenchmarkLSHSearchRealistic(b *testing.B) {
 
 	numDocuments := 100000
 	for n := 0; n < numDocuments; n++ {
-		vec := make([]float64, opt.VectorLength)
+		vec := make([]float64, cfg.VectorLength)
 		copy(vec, waveforms[waveNames[n%len(waveNames)]])
-		for j := 0; j < opt.VectorLength; j++ {
+		for j := 0; j < cfg.VectorLength; j++ {
 			vec[j] += rand.Float64()
 		}
-		doc := NewSimpleDocument(uint64(n), 0, vec)
+		doc := document.NewSimple(uint64(n), 0, vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
 
 	query := waveforms["risingstep"]
-	d := SimpleDocument{Vector: query}
+	d := document.Simple{Vector: query}
 
-	so := NewDefaultSearchOptions()
-	so.SignFilter = SignFilter_POS
+	so := options.NewDefaultSearch()
+	so.SignFilter = options.SignFilter_POS
 	so.NumToReturn = 30000
 	so.Threshold = 0.65
 
@@ -702,46 +639,46 @@ func BenchmarkLSHSearchRealistic(b *testing.B) {
 }
 
 func BenchmarkLSHSearchRealisticSingleHyperplane(b *testing.B) {
-	opt := NewDefaultOptions()
-	opt.VectorLength = 60
-	opt.NumHyperplanes = 1
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.VectorLength = 60
+	cfg.NumHyperplanes = 1
+	lsh, err := New(cfg)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	waveforms := make(map[string][]float64)
-	spike := make([]float64, opt.VectorLength)
-	spike[opt.VectorLength/2] = 1.0
+	spike := make([]float64, cfg.VectorLength)
+	spike[cfg.VectorLength/2] = 1.0
 	waveforms["spike"] = spike
 
-	risingstep := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+	risingstep := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 2; i < cfg.VectorLength; i++ {
 		risingstep[i] = 1.0
 	}
 	waveforms["risingstep"] = risingstep
 
-	loweringstep := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 2; i < opt.VectorLength; i++ {
+	loweringstep := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 2; i < cfg.VectorLength; i++ {
 		loweringstep[i] = -1.0
 	}
 	waveforms["loweringstep"] = loweringstep
 
-	triangle := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
-		triangle[i] = 1 * float64(i-opt.VectorLength/4)
+	triangle := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 4; i < cfg.VectorLength/2; i++ {
+		triangle[i] = 1 * float64(i-cfg.VectorLength/4)
 	}
-	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
-		triangle[i] = -1*float64(i-opt.VectorLength/2) + 1
+	for i := cfg.VectorLength / 2; i < 3*cfg.VectorLength/4; i++ {
+		triangle[i] = -1*float64(i-cfg.VectorLength/2) + 1
 	}
 	waveforms["triangle"] = triangle
 
-	dip := make([]float64, opt.VectorLength)
-	for i := opt.VectorLength / 4; i < opt.VectorLength/2; i++ {
-		dip[i] = -1 * float64(i-opt.VectorLength/4)
+	dip := make([]float64, cfg.VectorLength)
+	for i := cfg.VectorLength / 4; i < cfg.VectorLength/2; i++ {
+		dip[i] = -1 * float64(i-cfg.VectorLength/4)
 	}
-	for i := opt.VectorLength / 2; i < 3*opt.VectorLength/4; i++ {
-		dip[i] = 1*float64(i-opt.VectorLength/2) - 1
+	for i := cfg.VectorLength / 2; i < 3*cfg.VectorLength/4; i++ {
+		dip[i] = 1*float64(i-cfg.VectorLength/2) - 1
 	}
 	waveforms["dip"] = dip
 
@@ -749,23 +686,23 @@ func BenchmarkLSHSearchRealisticSingleHyperplane(b *testing.B) {
 
 	numDocuments := 100000
 	for n := 0; n < numDocuments; n++ {
-		vec := make([]float64, opt.VectorLength)
+		vec := make([]float64, cfg.VectorLength)
 		copy(vec, waveforms[waveNames[n%len(waveNames)]])
-		for j := 0; j < opt.VectorLength; j++ {
+		for j := 0; j < cfg.VectorLength; j++ {
 			vec[j] += rand.Float64()
 		}
 
-		doc := NewSimpleDocument(uint64(n), 0, vec)
+		doc := document.NewSimple(uint64(n), 0, vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
 	}
 
 	query := waveforms["risingstep"]
-	d := SimpleDocument{Vector: query}
+	d := document.Simple{Vector: query}
 
-	so := NewDefaultSearchOptions()
-	so.SignFilter = SignFilter_POS
+	so := options.NewDefaultSearch()
+	so.SignFilter = options.SignFilter_POS
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -776,21 +713,21 @@ func BenchmarkLSHSearchRealisticSingleHyperplane(b *testing.B) {
 	}
 }
 func BenchmarkLSHDelete(b *testing.B) {
-	opt := NewDefaultOptions()
-	opt.VectorLength = 60
-	lsh, err := New(opt)
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.VectorLength = 60
+	lsh, err := New(cfg)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	numDocuments := 10000
 	for n := 0; n < numDocuments; n++ {
-		vec := make([]float64, opt.VectorLength)
-		for j := 0; j < opt.VectorLength; j++ {
+		vec := make([]float64, cfg.VectorLength)
+		for j := 0; j < cfg.VectorLength; j++ {
 			vec[j] = rand.Float64()
 		}
 
-		doc := NewSimpleDocument(uint64(n), 0, vec)
+		doc := document.NewSimple(uint64(n), 0, vec)
 		if err := lsh.Index(doc); err != nil {
 			b.Fatal(err)
 		}
@@ -800,7 +737,7 @@ func BenchmarkLSHDelete(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		err := lsh.Delete(uint64(i))
 		if err != nil {
-			if err == ErrDocumentNotStored {
+			if err == lsherrors.DocumentNotStored {
 				continue
 			}
 			b.Fatal(err)

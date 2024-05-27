@@ -1,28 +1,22 @@
-package lsh
+package results
 
 import (
 	"container/heap"
 	"math"
+
+	"github.com/aouyang1/go-lsh/options"
 )
 
 type Results struct {
 	TopN       int
 	Threshold  float64
-	SignFilter SignFilter
+	SignFilter options.SignFilter
 	scores     Scores
 	NumScored  int
 }
 
-type SignFilter int
-
-const (
-	SignFilter_POS = 1
-	SignFilter_NEG = -1
-	SignFilter_ANY = 0
-)
-
 // NewResults creates a new instance of results to track similar vectors
-func NewResults(topN int, threshold float64, signFilter SignFilter) *Results {
+func New(topN int, threshold float64, signFilter options.SignFilter) *Results {
 	scores := make(Scores, 0, topN)
 
 	// Build priority queue of size TopN so that we don't have to sort over the entire
@@ -40,9 +34,9 @@ func NewResults(topN int, threshold float64, signFilter SignFilter) *Results {
 // passed checks if the input score satisfies the Results lag and threshold requirements
 func (r *Results) passed(s Score) bool {
 	return math.Abs(float64(s.Score)) >= r.Threshold &&
-		(r.SignFilter == SignFilter_ANY ||
-			(s.Score > 0 && r.SignFilter == SignFilter_POS) ||
-			(s.Score < 0 && r.SignFilter == SignFilter_NEG))
+		(r.SignFilter == options.SignFilter_ANY ||
+			(s.Score > 0 && r.SignFilter == options.SignFilter_POS) ||
+			(s.Score < 0 && r.SignFilter == options.SignFilter_NEG))
 }
 
 // Update records the input score

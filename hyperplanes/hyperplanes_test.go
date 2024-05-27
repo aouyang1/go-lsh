@@ -1,4 +1,4 @@
-package lsh
+package hyperplanes
 
 import (
 	"encoding/binary"
@@ -6,23 +6,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aouyang1/go-lsh/configs"
 	"gonum.org/v1/gonum/floats"
 )
 
-func TestNewHyperplanes(t *testing.T) {
-	if _, err := NewHyperplanes(0, 7); err != ErrInvalidNumHyperplanes {
+func TestNew(t *testing.T) {
+	if _, err := New(0, 7); err != configs.ErrInvalidNumHyperplanes {
 		t.Error(err)
 		return
 	}
 
-	if _, err := NewHyperplanes(5, 0); err != ErrInvalidVectorLength {
+	if _, err := New(5, 0); err != configs.ErrInvalidVectorLength {
 		t.Error(err)
 		return
 	}
 
 	nh := 4
 	vl := 7
-	h, err := NewHyperplanes(nh, vl)
+	h, err := New(nh, vl)
 	if err != nil {
 		t.Error(err)
 		return
@@ -205,7 +206,7 @@ func BenchmarkHyperplaneNew(b *testing.B) {
 	vecLen := 60
 
 	for i := 0; i < b.N; i++ {
-		_, err := NewHyperplanes(numHyperplanes, vecLen)
+		_, err := New(numHyperplanes, vecLen)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -216,7 +217,7 @@ func BenchmarkHyperplaneHash64(b *testing.B) {
 	numHyperplanes := 8
 	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, vecLen)
+	h, err := New(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -234,7 +235,7 @@ func BenchmarkHyperplaneHash32(b *testing.B) {
 	numHyperplanes := 8
 	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, vecLen)
+	h, err := New(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func BenchmarkHyperplaneHash16(b *testing.B) {
 	numHyperplanes := 8
 	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, vecLen)
+	h, err := New(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func BenchmarkHyperplaneHash8(b *testing.B) {
 	numHyperplanes := 8
 	vecLen := 60
 
-	h, err := NewHyperplanes(numHyperplanes, vecLen)
+	h, err := New(numHyperplanes, vecLen)
 	if err != nil {
 		b.Fatal(err)
 	}

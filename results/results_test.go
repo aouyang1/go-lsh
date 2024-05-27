@@ -1,4 +1,4 @@
-package lsh
+package results
 
 import (
 	"testing"
