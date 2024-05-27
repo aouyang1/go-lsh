@@ -132,6 +132,7 @@ func New(opt *Options) (*LSH, error) {
 // Index stores the document in the LSH data structure. Returns an error if the document
 // is already present.
 func (l *LSH) Index(d Document) error {
+	origDoc := d.Copy()
 	uid := d.GetUID()
 	vec := d.GetVector()
 	if len(vec) != l.Opt.VectorLength {
@@ -149,7 +150,35 @@ func (l *LSH) Index(d Document) error {
 	if err := l.index(d); err != nil {
 		return err
 	}
-	l.Docs[uid] = d
+
+	// expand current doc of the uid if present
+	if currDoc, exists := l.Docs[origDoc.GetUID()]; exists {
+		dIdx := origDoc.GetIndex() / l.Opt.SamplePeriod
+		cdIdx := currDoc.GetIndex() / l.Opt.SamplePeriod
+		offset := int(dIdx - cdIdx)
+
+		origVec := origDoc.GetVector()
+		cdVec := currDoc.GetVector()
+		if offset > 0 {
+			for i := 0; i < len(origVec); i++ {
+				idx := i + offset
+				if idx < len(cdVec) {
+					cdVec[idx] = origVec[i]
+				} else {
+					zeroPad := idx - len(cdVec)
+					if zeroPad > 0 {
+						zeros := make([]float64, zeroPad)
+						cdVec = append(cdVec, zeros...)
+					}
+					cdVec = append(cdVec, origVec[i])
+				}
+			}
+		} else {
+			// not handling docs that are in the past
+		}
+	} else {
+		l.Docs[uid] = d
+	}
 	return nil
 }
 
@@ -235,12 +264,12 @@ func (l *LSH) Search(d Document, s *SearchOptions) (Scores, int, error) {
 	}
 	res := NewResults(s.NumToReturn, s.Threshold, SignFilter_POS)
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_POS {
-		l.Score(d, docIds, res)
+		l.Score(d, docIds, s.MaxLag, res)
 	}
 
 	if s.SignFilter == SignFilter_ANY || s.SignFilter == SignFilter_NEG {
 		floats.Scale(-1, d.GetVector())
-		l.Score(d, docIds, res)
+		l.Score(d, docIds, s.MaxLag, res)
 		floats.Scale(-1, d.GetVector())
 	}
 	return res.Fetch(), res.NumScored, nil
@@ -310,13 +339,29 @@ func (l *LSH) filter(d Document, maxLag int64) ([]uint64, error) {
 }
 
 // Score takes a set of document ids and scores them against a provided search query
-func (l *LSH) Score(d Document, docIds []uint64, res *Results) {
+func (l *LSH) Score(d Document, docIds []uint64, maxLag int64, res *Results) {
+	buffer := make([]float64, l.Opt.VectorLength)
 	for _, uid := range docIds {
 		doc, exists := l.Docs[uid]
 		if !exists || doc == nil {
 			continue
 		}
-		score := stat.Correlation(d.GetVector(), doc.GetVector(), nil)
+		idx := d.GetIndex()
+		vec := doc.GetVector()
+		dIdx := doc.GetIndex()
+
+		// just does 0 lag
+		startOffset := int((idx - dIdx) / l.Opt.SamplePeriod)
+		endOffset := startOffset + l.Opt.VectorLength
+		if endOffset > len(vec) {
+			endOffset = len(vec)
+		}
+
+		for i := 0; i < len(buffer); i++ {
+			buffer[i] = 0.0
+		}
+		copy(buffer, vec[startOffset:endOffset])
+		score := stat.Correlation(d.GetVector(), buffer, nil)
 		res.Update(Score{uid, score})
 	}
 }

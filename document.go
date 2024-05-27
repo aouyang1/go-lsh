@@ -5,6 +5,7 @@ import (
 )
 
 type Document interface {
+	Copy() Document
 	GetUID() uint64
 	GetIndex() int64
 	GetVector() []float64
@@ -23,6 +24,18 @@ func NewSimpleDocument(uid uint64, index int64, v []float64) *SimpleDocument {
 		Index:  index,
 		Vector: v,
 	}
+}
+
+func (d SimpleDocument) Copy() Document {
+	vec := d.GetVector()
+	nextVec := make([]float64, len(vec))
+	copy(nextVec, vec)
+	next := &SimpleDocument{
+		UID:    d.GetUID(),
+		Index:  d.GetIndex(),
+		Vector: nextVec,
+	}
+	return next
 }
 
 func (d SimpleDocument) GetUID() uint64 {
