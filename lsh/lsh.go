@@ -5,12 +5,10 @@ import (
 	"math"
 	"sync"
 
-	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/aouyang1/go-lsh/configs"
 	"github.com/aouyang1/go-lsh/document"
 	"github.com/aouyang1/go-lsh/forwardindex"
 	"github.com/aouyang1/go-lsh/hyperplanes"
-	"github.com/aouyang1/go-lsh/lsherrors"
 	"github.com/aouyang1/go-lsh/options"
 	"github.com/aouyang1/go-lsh/results"
 	"github.com/aouyang1/go-lsh/stats"
@@ -63,16 +61,12 @@ func New(cfg *configs.LSHConfigs) (*LSH, error) {
 // is already present.
 func (l *LSH) Index(d document.Document) error {
 	origDoc := d.Copy()
-	uid := d.GetUID()
 	vec := d.GetVector()
 	if len(vec) != l.Cfg.VectorLength {
 		return ErrInvalidDocument
 	}
 	if stat.StdDev(vec, nil) == 0 {
 		return ErrNoVectorComplexity
-	}
-	if _, exists := l.Docs.Exists(uid); exists {
-		return lsherrors.DuplicateDocument
 	}
 
 	vec = l.Cfg.TFunc(vec)
@@ -128,21 +122,14 @@ func (l *LSH) Search(d document.Document, s *options.Search) (results.Scores, in
 	if err != nil {
 		return nil, 0, err
 	}
-	res := results.New(s.NumToReturn, s.Threshold, options.SignFilter_POS)
-	if s.SignFilter == options.SignFilter_ANY || s.SignFilter == options.SignFilter_POS {
-		l.score(d, docIds, s.MaxLag, res)
-	}
+	res := results.New(s.NumToReturn, s.Threshold, s.SignFilter)
+	l.score(d, docIds, res)
 
-	if s.SignFilter == options.SignFilter_ANY || s.SignFilter == options.SignFilter_NEG {
-		floats.Scale(-1, d.GetVector())
-		l.score(d, docIds, s.MaxLag, res)
-		floats.Scale(-1, d.GetVector())
-	}
 	return res.Fetch(), res.NumScored, nil
 }
 
 // Filter returns a set of document ids that match the given vector and search options
-func (l *LSH) filterDocs(d document.Document, s *options.Search) ([]uint64, error) {
+func (l *LSH) filterDocs(d document.Document, s *options.Search) (map[uint64]map[int64]struct{}, error) {
 	vec := d.GetVector()
 	if len(vec) != l.Cfg.VectorLength {
 		return nil, ErrInvalidDocument
@@ -156,33 +143,44 @@ func (l *LSH) filterDocs(d document.Document, s *options.Search) ([]uint64, erro
 		}
 	}
 
-	var docIds []uint64
+	docIds := make(map[uint64]map[int64]struct{})
 	// search for positively correlated results
 	if s.SignFilter == options.SignFilter_ANY || s.SignFilter == options.SignFilter_POS {
-		dids, err := l.filterDocsByLag(d, s.MaxLag)
-		if err != nil {
-			return nil, err
+		dids := l.filterDocsByLag(d, s.MaxLag)
+		for uid, indexes := range dids {
+			for index := range indexes {
+				uidIndexes, exists := docIds[uid]
+				if !exists {
+					uidIndexes = make(map[int64]struct{})
+					docIds[uid] = uidIndexes
+				}
+				uidIndexes[index] = struct{}{}
+			}
 		}
-		docIds = append(docIds, dids...)
 	}
 
 	// search for negatively correlated results
 	if s.SignFilter == options.SignFilter_ANY || s.SignFilter == options.SignFilter_NEG {
 		floats.Scale(-1, vec)
-		dids, err := l.filterDocsByLag(d, s.MaxLag)
-		if err != nil {
-			floats.Scale(-1, vec) // undo negation
-			return nil, err
-		}
+		dids := l.filterDocsByLag(d, s.MaxLag)
 		floats.Scale(-1, vec) // undo negation
-		docIds = append(docIds, dids...)
+		for uid, indexes := range dids {
+			for index := range indexes {
+				uidIndexes, exists := docIds[uid]
+				if !exists {
+					uidIndexes = make(map[int64]struct{})
+					docIds[uid] = uidIndexes
+				}
+				uidIndexes[index] = struct{}{}
+			}
+		}
 	}
 
 	return docIds, nil
 }
 
-func (l *LSH) filterDocsByLag(d document.Document, maxLag int64) ([]uint64, error) {
-	rbRes := roaring64.New()
+func (l *LSH) filterDocsByLag(d document.Document, maxLag int64) map[uint64]map[int64]struct{} {
+	mergedRes := make(map[uint64]map[int64]struct{})
 	var resLock sync.Mutex
 	var wg sync.WaitGroup
 	wg.Add(len(l.Tables))
@@ -190,28 +188,38 @@ func (l *LSH) filterDocsByLag(d document.Document, maxLag int64) ([]uint64, erro
 	for _, t := range l.Tables {
 		go func(tbl *tables.Table) {
 			defer wg.Done()
-			rowRbRes := tbl.Filter(d, maxLag)
-
+			docToIndex := tbl.Filter(d, maxLag)
 			resLock.Lock()
-			rbRes.Or(rowRbRes)
+			for uid, indexes := range docToIndex {
+				for index := range indexes {
+					uidIndexes, exists := mergedRes[uid]
+					if !exists {
+						uidIndexes = make(map[int64]struct{})
+						mergedRes[uid] = uidIndexes
+					}
+					uidIndexes[index] = struct{}{}
+				}
+			}
 			resLock.Unlock()
 		}(t)
 	}
 	wg.Wait()
 
-	return rbRes.ToArray(), nil
+	return mergedRes
 }
 
 // Score takes a set of document ids and scores them against a provided search query
-func (l *LSH) score(d document.Document, docIds []uint64, maxLag int64, res *results.Results) {
-	for _, uid := range docIds {
-		currDocVec := l.Docs.GetVector(uid, d.GetIndex())
-		if currDocVec == nil {
-			continue
+func (l *LSH) score(d document.Document, docIds map[uint64]map[int64]struct{}, res *results.Results) {
+	for uid, indexes := range docIds {
+		for index := range indexes {
+			currDocVec := l.Docs.GetVector(uid, index)
+			if currDocVec == nil {
+				continue
+			}
+			l.Cfg.TFunc(currDocVec)
+			score := stat.Correlation(d.GetVector(), currDocVec, nil)
+			res.Update(results.Score{UID: uid, Index: index, Score: score})
 		}
-		l.Cfg.TFunc(currDocVec)
-		score := stat.Correlation(d.GetVector(), currDocVec, nil)
-		res.Update(results.Score{uid, score})
 	}
 }
 
@@ -272,7 +280,8 @@ func (l *LSH) Stats() *stats.Statistics {
 
 		fneg := math.Pow((1 - math.Pow(psame, float64(l.Cfg.NumHyperplanes))), float64(l.Cfg.NumTables))
 
-		s.FalseNegativeErrors = append(s.FalseNegativeErrors, stats.FalseNegativeError{theta, fneg})
+		fnegErr := stats.FalseNegativeError{Threshold: theta, Probability: fneg}
+		s.FalseNegativeErrors = append(s.FalseNegativeErrors, fnegErr)
 	}
 	return s
 }

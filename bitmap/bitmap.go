@@ -17,10 +17,10 @@ func New() *Bitmap {
 	return &Bitmap{Rb: roaring64.New()}
 }
 
-func (b *Bitmap) CheckedAdd(uid uint64) bool {
+func (b *Bitmap) Add(uid uint64) {
 	b.Lock()
 	defer b.Unlock()
-	return b.Rb.CheckedAdd(uid)
+	b.Rb.Add(uid)
 }
 
 func (b *Bitmap) CheckedRemove(uid uint64) bool {

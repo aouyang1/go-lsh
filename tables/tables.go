@@ -2,9 +2,8 @@ package tables
 
 import (
 	"errors"
-	"fmt"
+	"strconv"
 
-	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/aouyang1/go-lsh/bitmap"
 	"github.com/aouyang1/go-lsh/configs"
 	"github.com/aouyang1/go-lsh/document"
@@ -29,7 +28,7 @@ func New(cfg *configs.LSHConfigs, ht []*hyperplanes.Hyperplanes) ([]*Table, erro
 
 	tables := make([]*Table, cfg.NumTables)
 	for i := 0; i < cfg.NumTables; i++ {
-		tables[i], err = NewTable(ht[i], cfg)
+		tables[i], err = NewTable(strconv.Itoa(i), ht[i], cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -40,15 +39,17 @@ func New(cfg *configs.LSHConfigs, ht []*hyperplanes.Hyperplanes) ([]*Table, erro
 // Table maps buckets to a bitmap of document ids. Where documents are stored in the table is determined by
 // finding the bucket a document is mapped to.
 type Table struct {
-	Cfg *configs.LSHConfigs
+	Name string
+	Cfg  *configs.LSHConfigs
 
 	Hyperplanes *hyperplanes.Hyperplanes
 	Table       map[int64]map[uint16]*bitmap.Bitmap // row index to hash to bitmaps
-	Doc2Hash    map[uint64]uint16
+	Doc2Hash    map[uint64]map[uint16][]int64       // uid to hash to slice of timestamps
 }
 
-func NewTable(h *hyperplanes.Hyperplanes, cfg *configs.LSHConfigs) (*Table, error) {
+func NewTable(name string, h *hyperplanes.Hyperplanes, cfg *configs.LSHConfigs) (*Table, error) {
 	t := new(Table)
+	t.Name = name
 	t.Cfg = cfg
 
 	var err error
@@ -58,16 +59,13 @@ func NewTable(h *hyperplanes.Hyperplanes, cfg *configs.LSHConfigs) (*Table, erro
 	}
 
 	t.Table = make(map[int64]map[uint16]*bitmap.Bitmap)
-	t.Doc2Hash = make(map[uint64]uint16)
+	t.Doc2Hash = make(map[uint64]map[uint16][]int64)
 	return t, nil
 }
 
 func (t *Table) Index(d document.Document) error {
 	uid := d.GetUID()
 	v := d.GetVector()
-	if _, exists := t.Doc2Hash[uid]; exists {
-		return lsherrors.DuplicateDocument
-	}
 
 	hash, err := t.Hyperplanes.Hash16(v)
 	if err != nil {
@@ -87,26 +85,27 @@ func (t *Table) Index(d document.Document) error {
 		tbl[hash] = rb
 	}
 
-	if !rb.CheckedAdd(uid) {
-		return fmt.Errorf("unable to add %d to bitmap at hash, %d", uid, hash)
-	}
+	rb.Add(uid)
 
-	t.Doc2Hash[uid] = hash
+	hashTimestamps, exists := t.Doc2Hash[uid]
+	if !exists {
+		hashTimestamps = make(map[uint16][]int64)
+		t.Doc2Hash[uid] = hashTimestamps
+	}
+	timestamps := hashTimestamps[hash]
+	timestamps = append(timestamps, d.GetIndex())
+	hashTimestamps[hash] = timestamps
 	return nil
 }
 
-func (t *Table) Filter(d document.Document, maxLag int64) *roaring64.Bitmap {
+func (t *Table) Filter(d document.Document, maxLag int64) map[uint64]map[int64]struct{} {
 	v := d.GetVector()
 	hash, _ := t.Hyperplanes.Hash16(v)
-
-	rbRes := roaring64.New()
-
+	docToIndex := make(map[uint64]map[int64]struct{})
 	if maxLag > -1 {
 		// indicates we're looking for time windows with some wiggle room
-		startIdx := d.GetIndex()
-		endIdx := startIdx + int64(t.Cfg.VectorLength)*t.Cfg.SamplePeriod
-		startIdx -= maxLag
-		endIdx += maxLag
+		startIdx := d.GetIndex() - maxLag
+		endIdx := d.GetIndex() + maxLag
 		startRow := startIdx / t.Cfg.RowSize * t.Cfg.RowSize
 		endRow := endIdx / t.Cfg.RowSize * t.Cfg.RowSize
 		rows := (endRow-startRow)/t.Cfg.RowSize + 1
@@ -120,7 +119,19 @@ func (t *Table) Filter(d document.Document, maxLag int64) *roaring64.Bitmap {
 				continue
 			}
 			rb.Lock()
-			rbRes.Or(rb.Rb)
+			for _, uid := range rb.Rb.ToArray() {
+				indexMap, exists := docToIndex[uid]
+				if !exists {
+					indexMap = make(map[int64]struct{})
+					docToIndex[uid] = indexMap
+				}
+				for _, index := range t.Doc2Hash[uid][hash] {
+					// keep only indexes within the specified lag
+					if index >= startIdx && index <= endIdx {
+						indexMap[index] = struct{}{}
+					}
+				}
+			}
 			rb.Unlock()
 		}
 	} else {
@@ -131,31 +142,42 @@ func (t *Table) Filter(d document.Document, maxLag int64) *roaring64.Bitmap {
 				continue
 			}
 			rb.Lock()
-			rbRes.Or(rb.Rb)
+			for _, uid := range rb.Rb.ToArray() {
+				indexMap, exists := docToIndex[uid]
+				if !exists {
+					indexMap = make(map[int64]struct{})
+					docToIndex[uid] = indexMap
+				}
+				for _, index := range t.Doc2Hash[uid][hash] {
+					indexMap[index] = struct{}{}
+				}
+			}
 			rb.Unlock()
 		}
 	}
-	return rbRes
+	return docToIndex
 }
 
 func (t *Table) Delete(uid uint64) error {
-	hash, exists := t.Doc2Hash[uid]
+	hashes, exists := t.Doc2Hash[uid]
 	if !exists {
 		return lsherrors.DocumentNotStored
 	}
 
 	err := ErrHashNotFound
 	for _, tbl := range t.Table {
-		rb, exists := tbl[hash]
-		if !exists {
-			continue
-		}
-		err = nil
+		for hash := range hashes {
+			rb, exists := tbl[hash]
+			if !exists {
+				continue
+			}
+			err = nil
 
-		rb.CheckedRemove(uid)
+			rb.CheckedRemove(uid)
 
-		if rb.IsEmpty() {
-			delete(tbl, hash)
+			if rb.IsEmpty() {
+				delete(tbl, hash)
+			}
 		}
 	}
 	delete(t.Doc2Hash, uid)

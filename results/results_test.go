@@ -6,9 +6,9 @@ import (
 
 func TestScores(t *testing.T) {
 	s := Scores{
-		{0, 0.9},
-		{1, 0.8},
-		{2, 0.7},
+		{0, 0, 0.9},
+		{1, 0, 0.8},
+		{2, 0, 0.7},
 	}
 	res := s.Scores()
 	expected := []float64{0.9, 0.8, 0.7}

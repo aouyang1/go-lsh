@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"testing"
 	"time"
 
@@ -200,7 +201,7 @@ func TestIndexSimple(t *testing.T) {
 		{document.NewSimple(0, 0, []float64{0, 1}), ErrInvalidDocument},
 		{document.NewSimple(1, 0, []float64{3, 3, 3}), ErrNoVectorComplexity},
 		{document.NewSimple(2, 0, []float64{3, 3, 0}), nil},
-		{document.NewSimple(2, 0, []float64{1, 2, 3}), lsherrors.DuplicateDocument},
+		{document.NewSimple(2, 0, []float64{1, 2, 3}), nil},
 	}
 	for _, td := range testData {
 		if err := lsh.Index(td.doc); err != td.expectedErr {
@@ -323,6 +324,66 @@ func TestSearch(t *testing.T) {
 
 }
 
+func TestSearchAcrossTime(t *testing.T) {
+	cfg := configs.NewDefaultLSHConfigs()
+	cfg.NumHyperplanes = 4
+	cfg.RowSize = 60
+	lsh, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	docs := []document.Document{
+		document.NewSimple(0, 0, []float64{0, 1, 3}),
+		document.NewSimple(0, 60, []float64{1, 3, 3}),
+		document.NewSimple(0, 120, []float64{3, 3, 0}),
+		document.NewSimple(0, 180, []float64{3, 0, 1}),
+		document.NewSimple(1, 0, []float64{0, 1, 3}),
+		document.NewSimple(1, 60, []float64{1, 3, 3}),
+		document.NewSimple(1, 120, []float64{3, 3, 0}),
+		document.NewSimple(1, 180, []float64{3, 0, 0}),
+	}
+
+	for _, d := range docs {
+		if err := lsh.Index(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	so := options.NewDefaultSearch()
+	so.MaxLag = -1
+	so.Threshold = 1.00
+	d := document.Simple{Vector: []float64{1, 3, 3}}
+	res, _, err := lsh.Search(d, so)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := results.Scores{
+		{UID: 0, Index: 60, Score: 1.00},
+		{UID: 1, Index: 60, Score: 1.00},
+		{UID: 1, Index: 180, Score: -1.00},
+	}
+	if err := compareScores(res, expected); err != nil {
+		t.Fatalf("%v, res: %v, expected: %v", err, res, expected)
+	}
+
+	// test that we get the right row index``
+	so.MaxLag = 0
+	d = document.Simple{Index: 60, Vector: []float64{1, 3, 3}}
+	res, _, err = lsh.Search(d, so)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected = results.Scores{
+		{UID: 0, Index: 60, Score: 1.00},
+		{UID: 1, Index: 60, Score: 1.00},
+	}
+	if err := compareScores(res, expected); err != nil {
+		t.Fatalf("%v, res: %v, expected: %v", err, res, expected)
+	}
+}
+
 func TestLSHError(t *testing.T) {
 	numHyperplanes := 8
 	numTables := 3
@@ -413,14 +474,14 @@ func TestLSHStats(t *testing.T) {
 	expectedS := &stats.Statistics{
 		NumDocs: len(docs),
 		FalseNegativeErrors: []stats.FalseNegativeError{
-			{0.60, 0.903},
-			{0.65, 0.804},
-			{0.70, 0.636},
-			{0.75, 0.395},
-			{0.80, 0.149},
-			{0.85, 0.018},
-			{0.90, 0.000},
-			{0.95, 0.000},
+			{Threshold: 0.60, Probability: 0.903},
+			{Threshold: 0.65, Probability: 0.804},
+			{Threshold: 0.70, Probability: 0.636},
+			{Threshold: 0.75, Probability: 0.395},
+			{Threshold: 0.80, Probability: 0.149},
+			{Threshold: 0.85, Probability: 0.018},
+			{Threshold: 0.90, Probability: 0.000},
+			{Threshold: 0.95, Probability: 0.000},
 		},
 	}
 	if s.NumDocs != expectedS.NumDocs {
@@ -454,6 +515,8 @@ func compareScores(res, expected results.Scores) error {
 	if len(res) != len(expected) {
 		return fmt.Errorf("expected %d scores, but got %d", len(expected), len(res))
 	}
+	sort.Sort(res)
+	sort.Sort(expected)
 	for i, s := range expected {
 		if s.UID != res[i].UID {
 			return fmt.Errorf("expected uid %d, but got %d", s.UID, res[i].UID)

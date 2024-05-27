@@ -80,7 +80,24 @@ func (s Scores) Swap(i, j int) {
 }
 
 func (s Scores) Less(i, j int) bool {
-	return math.Abs(s[i].Score) < math.Abs(s[j].Score)
+	a := s[i]
+	b := s[j]
+	if math.Abs(a.Score) < math.Abs(b.Score) {
+		return true
+	}
+	if math.Abs(a.Score) > math.Abs(b.Score) {
+		return false
+	}
+	if a.Index < b.Index {
+		return true
+	}
+	if a.Index > b.Index {
+		return false
+	}
+	if a.UID < b.UID {
+		return true
+	}
+	return false
 }
 
 // Push implements the function in the heap interface
@@ -113,5 +130,6 @@ func (s Scores) Scores() []float64 {
 
 type Score struct {
 	UID   uint64  `json:"uid"`
+	Index int64   `json:"index"`
 	Score float64 `json:"score"`
 }
