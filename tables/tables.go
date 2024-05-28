@@ -2,6 +2,7 @@ package tables
 
 import (
 	"errors"
+	"math"
 	"strconv"
 
 	"github.com/aouyang1/go-lsh/bitmap"
@@ -9,6 +10,7 @@ import (
 	"github.com/aouyang1/go-lsh/document"
 	"github.com/aouyang1/go-lsh/hyperplanes"
 	"github.com/aouyang1/go-lsh/lsherrors"
+	"github.com/aouyang1/go-lsh/options"
 )
 
 var (
@@ -102,58 +104,52 @@ func (t *Table) Filter(d document.Document, maxLag int64) map[uint64]map[int64]s
 	v := d.GetVector()
 	hash, _ := t.Hyperplanes.Hash16(v)
 	docToIndex := make(map[uint64]map[int64]struct{})
-	if maxLag > -1 {
+	var rowIndexes []int64
+
+	// settings for no max lag
+	startIdx := int64(0)
+	endIdx := int64(math.MaxInt64)
+
+	if maxLag > options.AllLags {
 		// indicates we're looking for time windows with some wiggle room
-		startIdx := d.GetIndex() - maxLag
-		endIdx := d.GetIndex() + maxLag
+		startIdx = d.GetIndex() - maxLag
+		endIdx = d.GetIndex() + maxLag
 		startRow := startIdx / t.Cfg.RowSize * t.Cfg.RowSize
 		endRow := endIdx / t.Cfg.RowSize * t.Cfg.RowSize
 		rows := (endRow-startRow)/t.Cfg.RowSize + 1
 		for i := int64(0); i < rows; i++ {
-			tblRow, exists := t.Table[startRow+i*t.Cfg.RowSize]
-			if !exists {
-				continue
-			}
-			rb := tblRow[hash]
-			if rb == nil {
-				continue
-			}
-			rb.Lock()
-			for _, uid := range rb.Rb.ToArray() {
-				indexMap, exists := docToIndex[uid]
-				if !exists {
-					indexMap = make(map[int64]struct{})
-					docToIndex[uid] = indexMap
-				}
-				for _, index := range t.Doc2Hash[uid][hash] {
-					// keep only indexes within the specified lag
-					if index >= startIdx && index <= endIdx {
-						indexMap[index] = struct{}{}
-					}
-				}
-			}
-			rb.Unlock()
+			rowIndexes = append(rowIndexes, startRow+i*t.Cfg.RowSize)
 		}
 	} else {
-		// scan for all
-		for _, tblRow := range t.Table {
-			rb := tblRow[hash]
-			if rb == nil {
-				continue
+		for rowIndex := range t.Table {
+			rowIndexes = append(rowIndexes, rowIndex)
+		}
+	}
+
+	for _, rowIndex := range rowIndexes {
+		tblRow, exists := t.Table[rowIndex]
+		if !exists {
+			continue
+		}
+		rb := tblRow[hash]
+		if rb == nil {
+			continue
+		}
+		rb.Lock()
+		for _, uid := range rb.Rb.ToArray() {
+			indexMap, exists := docToIndex[uid]
+			if !exists {
+				indexMap = make(map[int64]struct{})
+				docToIndex[uid] = indexMap
 			}
-			rb.Lock()
-			for _, uid := range rb.Rb.ToArray() {
-				indexMap, exists := docToIndex[uid]
-				if !exists {
-					indexMap = make(map[int64]struct{})
-					docToIndex[uid] = indexMap
-				}
-				for _, index := range t.Doc2Hash[uid][hash] {
+			for _, index := range t.Doc2Hash[uid][hash] {
+				// keep only indexes within the specified lag
+				if index >= startIdx && index <= endIdx {
 					indexMap[index] = struct{}{}
 				}
 			}
-			rb.Unlock()
 		}
+		rb.Unlock()
 	}
 	return docToIndex
 }

@@ -10,6 +10,10 @@ var (
 	ErrInvalidSignFilter  = errors.New("invalid sign filter, must be any, neg, or pos")
 )
 
+const (
+	AllLags = -1 // indicates we want all matches regardless of index position
+)
+
 type SignFilter int
 
 const (
@@ -40,8 +44,8 @@ func (s *Search) Validate() error {
 		return ErrInvalidSignFilter
 	}
 
-	if s.MaxLag < -1 {
-		s.MaxLag = -1
+	if s.MaxLag < AllLags {
+		s.MaxLag = AllLags
 	}
 
 	return nil
